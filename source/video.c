@@ -1,5 +1,8 @@
 #include "video.h"
 #include "log.h"
+#include <netdb.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
 #include <3ds/services/mvd.h>
 #include <curl/curl.h>
 #include <string.h>
@@ -33,6 +36,7 @@ static struct {
     char            client_id[48];
     char            hls_url[4096];
     char            last_seg[512];
+    char            usher_resolve[64]; /* "usher.ttvnw.net:443:IP" */
 } V;
 
 /* ── curl write callback ───────────────────────────────────── */
@@ -60,6 +64,10 @@ static char *http_get(const char *url, const char *auth_hdr) {
     curl_easy_setopt(c, CURLOPT_IPRESOLVE,    CURL_IPRESOLVE_V4);
     curl_easy_setopt(c, CURLOPT_TIMEOUT,       15L);
     curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION,1L);
+    struct curl_slist *resolve_list = NULL;
+    if (V.usher_resolve[0] && strstr(url, "usher.ttvnw.net"))
+        resolve_list = curl_slist_append(NULL, V.usher_resolve);
+    if (resolve_list) curl_easy_setopt(c, CURLOPT_RESOLVE, resolve_list);
     CURLcode res;
     if (auth_hdr) {
         struct curl_slist *h = curl_slist_append(NULL, auth_hdr);
@@ -71,6 +79,7 @@ static char *http_get(const char *url, const char *auth_hdr) {
     }
     long code = 0; curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
     curl_easy_cleanup(c);
+    if (resolve_list) curl_slist_free_all(resolve_list);
     if (code != 200) {
         LOG("http_get curl=%d http=%ld urllen=%d url=%.80s", (int)res, code, (int)strlen(url), url);
         free(b.d); return NULL;
@@ -131,6 +140,25 @@ static bool fetch_hls_url(void) {
         "https://usher.ttvnw.net/api/channel/hls/%s.m3u8"
         "?sig=%s&token=%s&allow_source=true&p=160&type=any&fast_breadcrumbs=true",
         V.channel, sig, etok);
+    curl_free(etok);
+
+    /* Pre-resolve usher hostname using system getaddrinfo (curl DNS fails on 3DS for this domain) */
+    {
+        struct addrinfo hints = {0}, *res = NULL;
+        hints.ai_family   = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        if (getaddrinfo("usher.ttvnw.net", NULL, &hints, &res) == 0) {
+            char ip[32] = {0};
+            inet_ntop(AF_INET, &((struct sockaddr_in*)res->ai_addr)->sin_addr, ip, sizeof(ip));
+            freeaddrinfo(res);
+            snprintf(V.usher_resolve, sizeof(V.usher_resolve), "usher.ttvnw.net:443:%s", ip);
+            LOG("vid: usher resolved to %s", ip);
+        } else {
+            LOG("vid: usher getaddrinfo FAILED");
+            V.usher_resolve[0] = 0;
+        }
+    }
+    return true;
     curl_free(etok);
     return true;
 }
