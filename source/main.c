@@ -1075,10 +1075,6 @@ int main(void) {
 
         if (app.state == STATE_WATCHING) {
             irc_poll();
-            u64 now = osGetTime();
-            if (!app.thumb_loaded ||
-                (int)((now - app.thumb_last_tick) / 1000) >= THUMB_REFRESH_S)
-                fetch_thumbnail();
         }
 
         C3D_FrameBegin(C3D_FRAME_SYNCDRAW);

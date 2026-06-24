@@ -22,6 +22,7 @@ static struct {
     LightLock       lock;
     u8             *outbuf;   /* linearAlloc, RGB565 MVD output     */
     u8             *nalbuf;   /* linearAlloc, NAL unit input        */
+    u8             *stgbuf;   /* linearAlloc, pre-allocated staging */
     C3D_Tex         tex;
     Tex3DS_SubTexture subtex;
     C2D_Image       img;
@@ -178,6 +179,7 @@ static void nal_feed(const u8 *data, int len) {
     GSPGPU_FlushDataCache(V.nalbuf, len);
     Result r = mvdstdProcessVideoFrame(V.nalbuf, len, 0, NULL);
     if (MVD_CHECKNALUPROC_SUCCESS(r) && r == MVD_STATUS_FRAMEREADY) {
+        mvdstdRenderVideoFrame(&V.cfg, true); /* render to V.outbuf on thread */
         LightLock_Lock(&V.lock);
         V.has_frame = true;
         LightLock_Unlock(&V.lock);
@@ -326,8 +328,10 @@ bool video_init(void) {
     V.mvd_ok = true;
     V.outbuf = linearAlloc(OUT_W * OUT_H * 2);
     V.nalbuf = linearAlloc(NAL_MAX);
-    if (!V.outbuf || !V.nalbuf) { mvdstdExit(); return false; }
+    V.stgbuf = linearAlloc(TEX_W * TEX_H * 2);
+    if (!V.outbuf || !V.nalbuf || !V.stgbuf) { mvdstdExit(); return false; }
     memset(V.outbuf, 0, OUT_W * OUT_H * 2);
+    memset(V.stgbuf, 0, TEX_W * TEX_H * 2);
     LightLock_Init(&V.lock);
     C3D_TexInit(&V.tex, TEX_W, TEX_H, GPU_RGB565);
     C3D_TexSetFilter(&V.tex, GPU_LINEAR, GPU_LINEAR);
@@ -342,6 +346,7 @@ void video_exit(void) {
     if (V.mvd_ok) { mvdstdExit(); V.mvd_ok = false; }
     if (V.outbuf) { linearFree(V.outbuf); V.outbuf = NULL; }
     if (V.nalbuf) { linearFree(V.nalbuf); V.nalbuf = NULL; }
+    if (V.stgbuf) { linearFree(V.stgbuf); V.stgbuf = NULL; }
     C3D_TexDelete(&V.tex);
 }
 
@@ -364,31 +369,21 @@ void video_stop(void) {
 void video_draw_top(float x, float y) {
     LightLock_Lock(&V.lock);
     bool ready = V.has_frame;
+    if (ready) V.has_frame = false;
     LightLock_Unlock(&V.lock);
 
-    if (ready) {
-        /* render MVD output to outbuf */
-        mvdstdRenderVideoFrame(&V.cfg, true);
-
-        /* upload RGB565 to GPU texture */
-        u8 *linear = linearAlloc(TEX_W * TEX_H * 2);
-        if (linear) {
-            memset(linear, 0, TEX_W * TEX_H * 2);
-            for (int row = 0; row < OUT_H; row++)
-                memcpy(linear + row*TEX_W*2, V.outbuf + row*OUT_W*2, OUT_W*2);
-            GSPGPU_FlushDataCache(linear, TEX_W * TEX_H * 2);
-            C3D_SyncDisplayTransfer(
-                (u32*)linear,      GX_BUFFER_DIM(TEX_W, TEX_H),
-                (u32*)V.tex.data,  GX_BUFFER_DIM(TEX_W, TEX_H),
-                GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGB565) |
-                GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB565) |
-                GX_TRANSFER_FLIP_VERT(1) |
-                GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
-            linearFree(linear);
-        }
-        LightLock_Lock(&V.lock);
-        V.has_frame = false;
-        LightLock_Unlock(&V.lock);
+    if (ready && V.stgbuf) {
+        /* outbuf already rendered by thread — copy into staging and upload */
+        for (int row = 0; row < OUT_H; row++)
+            memcpy(V.stgbuf + row*TEX_W*2, V.outbuf + row*OUT_W*2, OUT_W*2);
+        GSPGPU_FlushDataCache(V.stgbuf, TEX_W * TEX_H * 2);
+        C3D_SyncDisplayTransfer(
+            (u32*)V.stgbuf,   GX_BUFFER_DIM(TEX_W, TEX_H),
+            (u32*)V.tex.data, GX_BUFFER_DIM(TEX_W, TEX_H),
+            GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGB565) |
+            GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB565) |
+            GX_TRANSFER_FLIP_VERT(1) |
+            GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
     }
     C2D_DrawImageAt(V.img, x, y, 0.5f, NULL, 1.0f, 1.0f);
 }
