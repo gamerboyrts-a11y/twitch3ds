@@ -13,6 +13,11 @@
 #include <sys/stat.h>
 #include <curl/curl.h>
 
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_JPEG
+#define STBI_NO_STDIO
+#include "stb_image.h"
+
 /* ── App defines ─────────────────────────────────────────── */
 #define CLIENT_ID       "l8ec56m4drzmzbq2vh6nmmz6hehcp4"
 #define DEFAULT_CHANNEL "xqc"
@@ -20,7 +25,16 @@
 #define SETTINGS_FILE   "/config/twitch_settings.txt"
 #define HISTORY_FILE    "/config/twitch_channels.txt"
 
+#define THUMB_REFRESH_S 30
+#define THUMB_W         400
+#define THUMB_H         225
+#define THUMB_TEX_W     512
+#define THUMB_TEX_H     256
+
 #define TOP_W 400
+#define TOP_H 240
+
+
 #define TOP_H 240
 #define BOT_W 320
 #define BOT_H 240
@@ -127,6 +141,13 @@ typedef struct {
         u64   last_poll_tick;       /* osGetTime() at last poll       */
         u64   start_tick;           /* osGetTime() when flow started  */
     } dcf;
+
+    /* Live thumbnail */
+    C3D_Tex           thumb_tex;
+    Tex3DS_SubTexture thumb_st;
+    C2D_Image         thumb_img;
+    bool              thumb_loaded;
+    u64               thumb_last_tick;
 } App;
 
 static App app;
@@ -386,7 +407,7 @@ static void join_channel(const char *chan) {
     history_push(app.channel);
     save_settings();
     chat_push("System", "Welcome to Twitch3DS!");
-    strcpy(app.stream_title, "Stream info not loaded yet");
+    app.thumb_loaded = false;
     strcpy(app.stream_game,  "Twitch");
     app.viewer_count = 0;
     if (irc_connect()) app.state = STATE_WATCHING;
@@ -628,6 +649,61 @@ static void dcf_poll_tick(void) {
  *  DRAW — TOP SCREEN
  * ═══════════════════════════════════════════════════════════ */
 
+/* ═══════════════════════════════════════════════════════════
+ *  LIVE THUMBNAIL
+ * ═══════════════════════════════════════════════════════════ */
+
+static void fetch_thumbnail(void) {
+    const char *ch = (app.channel[0] == '#') ? app.channel + 1 : app.channel;
+    char url[256];
+    snprintf(url, sizeof(url),
+        "https://static-cdn.jtvnw.net/previews-ttv/live_user_%s-%dx%d.jpg",
+        ch, THUMB_W, THUMB_H);
+
+    CURL *curl = curl_easy_init();
+    if (!curl) return;
+    CurlBuf buf = { NULL, 0, 0 };
+    buf.data = malloc(128 * 1024); buf.cap = 128 * 1024;
+    if (!buf.data) { curl_easy_cleanup(curl); return; }
+    buf.data[0] = '\0';
+    curl_easy_setopt(curl, CURLOPT_URL,           url);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA,     &buf);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT,        10L);
+    CURLcode res = curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+    if (res != CURLE_OK || buf.len == 0) { free(buf.data); return; }
+
+    int w, h, comp;
+    u8 *pixels = stbi_load_from_memory((const stbi_uc*)buf.data, (int)buf.len,
+                                        &w, &h, &comp, 4);
+    free(buf.data);
+    if (!pixels) return;
+
+    /* Copy into a linear-memory staging buffer, then GPU-transfer to tiled tex */
+    u8 *linear = linearAlloc(THUMB_TEX_W * THUMB_TEX_H * 4);
+    if (!linear) { stbi_image_free(pixels); return; }
+    memset(linear, 0, THUMB_TEX_W * THUMB_TEX_H * 4);
+    int cw = w < THUMB_TEX_W ? w : THUMB_TEX_W;
+    int ch2 = h < THUMB_TEX_H ? h : THUMB_TEX_H;
+    for (int y = 0; y < ch2; y++)
+        memcpy(linear + y * THUMB_TEX_W * 4, pixels + y * w * 4, cw * 4);
+    stbi_image_free(pixels);
+
+    GSPGPU_FlushDataCache(linear, THUMB_TEX_W * THUMB_TEX_H * 4);
+    C3D_SyncDisplayTransfer(
+        (u32*)linear,          GX_BUFFER_DIM(THUMB_TEX_W, THUMB_TEX_H),
+        (u32*)app.thumb_tex.data, GX_BUFFER_DIM(THUMB_TEX_W, THUMB_TEX_H),
+        GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |
+        GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
+        GX_TRANSFER_FLIP_VERT(1) |
+        GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
+    linearFree(linear);
+    app.thumb_loaded = true;
+    app.thumb_last_tick = osGetTime();
+}
+
 static void draw_top(void) {
     C2D_TargetClear(app.top, COL_BG_TOP);
     C2D_SceneBegin(app.top);
@@ -666,8 +742,12 @@ static void draw_top(void) {
         draw_text( 80, 130, 0.40f, COL_GRAY, "Open Channels tab and try again");
 
     } else {
-        draw_text(120, 108, 0.55f, COL_GRAY, "[ LIVE VIDEO ]");
-        draw_text( 70, 126, 0.40f, COL_GRAY, "Video decoder is not implemented yet");
+        if (app.thumb_loaded) {
+            C2D_DrawImageAt(app.thumb_img, 0, (TOP_H - THUMB_H) / 2.0f, 0.5f, NULL, 1.0f, 1.0f);
+        } else {
+            draw_text(120, 108, 0.55f, COL_GRAY, "[ LIVE VIDEO ]");
+            draw_text( 60, 126, 0.40f, COL_GRAY, "Fetching stream thumbnail...");
+        }
     }
 
     /* Overlay */
@@ -937,6 +1017,15 @@ int main(void) {
     app.history_sel   = 0;
     memset(app.lines,  0, sizeof(app.lines));
     memset(app.input,  0, sizeof(app.input));
+    app.thumb_loaded    = false;
+    app.thumb_last_tick = 0;
+    C3D_TexInit(&app.thumb_tex, THUMB_TEX_W, THUMB_TEX_H, GPU_RGBA8);
+    C3D_TexSetFilter(&app.thumb_tex, GPU_LINEAR, GPU_LINEAR);
+    app.thumb_st  = (Tex3DS_SubTexture){ THUMB_W, THUMB_H,
+                      0.0f, (float)THUMB_H/THUMB_TEX_H,
+                      (float)THUMB_W/THUMB_TEX_W, 0.0f };
+    app.thumb_img = (C2D_Image){ &app.thumb_tex, &app.thumb_st };
+
     memset(&app.dcf,   0, sizeof(app.dcf));
     strcpy(app.stream_title, "No stream metadata yet");
     strcpy(app.stream_game,  "Twitch");
@@ -971,7 +1060,13 @@ int main(void) {
         /* DCF polling — fires HTTP only when interval has elapsed */
         if (app.dcf.polling) dcf_poll_tick();
 
-        if (app.state == STATE_WATCHING) irc_poll();
+        if (app.state == STATE_WATCHING) {
+            irc_poll();
+            u64 now = osGetTime();
+            if (!app.thumb_loaded ||
+                (int)((now - app.thumb_last_tick) / 1000) >= THUMB_REFRESH_S)
+                fetch_thumbnail();
+        }
 
         C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
         draw_top();
