@@ -100,6 +100,7 @@ static bool fetch_hls_url(void) {
     curl_easy_perform(c);
     curl_slist_free_all(h);
     curl_easy_cleanup(c);
+    LOG("vid: GQL resp(%.200s)", buf.d ? buf.d : "(null)");
 
     char sig[128]={0}, token[2048]={0};
     const char *ps = strstr(buf.d, "\"signature\"");

@@ -404,8 +404,9 @@ static void irc_poll(void) {
     char tmp[512];
     int n = mbedtls_ssl_read(&g_ssl, (unsigned char*)tmp, sizeof(tmp)-1);
     if (n == MBEDTLS_ERR_SSL_WANT_READ || n == 0) return;
-    if (n < 0) { irc_disconnect(); return; }
+    if (n < 0) { LOG("IRC poll read err %d, disconnecting", n); irc_disconnect(); return; }
     tmp[n] = 0;
+    LOG("IRC rx: %.120s", tmp);
     int copy = n;
     if (app.irc_buf_len + copy >= IRC_BUF-1) copy = IRC_BUF-1-app.irc_buf_len;
     memcpy(app.irc_buf + app.irc_buf_len, tmp, copy);
