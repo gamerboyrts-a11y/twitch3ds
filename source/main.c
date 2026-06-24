@@ -266,7 +266,7 @@ static void load_token(void) {
     char line[256];
     while (fgets(line, sizeof(line), f)) {
         line[strcspn(line, "\r\n")] = 0;
-        if      (strncmp(line, "oauth:", 6) == 0) snprintf(app.oauth, sizeof(app.oauth), "PASS %.*s", (int)(sizeof(app.oauth)-6), line+6);
+        if      (strncmp(line, "oauth:", 6) == 0) snprintf(app.oauth, sizeof(app.oauth), "PASS %.*s", (int)(sizeof(app.oauth)-6), line);
         else if (strncmp(line, "nick:",  5) == 0) { strncpy(app.nick, line+5, sizeof(app.nick)-1); app.nick[sizeof(app.nick)-1] = 0; }
     }
     fclose(f);
