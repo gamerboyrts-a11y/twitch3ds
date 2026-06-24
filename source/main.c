@@ -13,6 +13,10 @@
 #include <sys/stat.h>
 #include <curl/curl.h>
 #include "video.h"
+#include <mbedtls/ssl.h>
+#include <mbedtls/entropy.h>
+#include <mbedtls/ctr_drbg.h>
+#include <errno.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_JPEG
@@ -41,7 +45,7 @@
 #define BOT_H 240
 
 #define IRC_HOST "irc.chat.twitch.tv"
-#define IRC_PORT 6667
+#define IRC_PORT 6697
 #define IRC_BUF  2048
 
 #define TAB_H        22
@@ -297,6 +301,23 @@ static void chat_push(const char *nick, const char *text) {
     if (!app.scroll_locked) app.scroll_offset = 0;
 }
 
+/* ── TLS globals for IRC ───────────────────────────────────── */
+static mbedtls_ssl_context      g_ssl;
+static mbedtls_ssl_config       g_conf;
+static mbedtls_entropy_context  g_entropy;
+static mbedtls_ctr_drbg_context g_ctr_drbg;
+static bool g_tls_ok = false;
+
+static int tls_send(void *ctx, const unsigned char *buf, size_t len) {
+    int r = send(*(int*)ctx, (const char*)buf, len, 0);
+    return r < 0 ? -1 : r;
+}
+static int tls_recv(void *ctx, unsigned char *buf, size_t len) {
+    int r = recv(*(int*)ctx, (char*)buf, len, 0);
+    if (r < 0) return (errno==EAGAIN||errno==EWOULDBLOCK) ? MBEDTLS_ERR_SSL_WANT_READ : -1;
+    return r;
+}
+
 static bool irc_connect(void) {
     struct addrinfo hints = {0}, *res = NULL;
     hints.ai_family   = AF_INET;
@@ -310,11 +331,39 @@ static bool irc_connect(void) {
         freeaddrinfo(res); close(app.sock); app.sock = -1; set_status("Connect failed"); return false;
     }
     freeaddrinfo(res);
+
+    /* TLS handshake (blocking — socket still blocking here) */
+    if (g_tls_ok) {
+        mbedtls_ssl_free(&g_ssl); mbedtls_ssl_config_free(&g_conf);
+        mbedtls_entropy_free(&g_entropy); mbedtls_ctr_drbg_free(&g_ctr_drbg);
+        g_tls_ok = false;
+    }
+    mbedtls_ssl_init(&g_ssl); mbedtls_ssl_config_init(&g_conf);
+    mbedtls_entropy_init(&g_entropy); mbedtls_ctr_drbg_init(&g_ctr_drbg);
+    mbedtls_ctr_drbg_seed(&g_ctr_drbg, mbedtls_entropy_func, &g_entropy, NULL, 0);
+    mbedtls_ssl_config_defaults(&g_conf, MBEDTLS_SSL_IS_CLIENT,
+        MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT);
+    mbedtls_ssl_conf_authmode(&g_conf, MBEDTLS_SSL_VERIFY_NONE);
+    mbedtls_ssl_conf_rng(&g_conf, mbedtls_ctr_drbg_random, &g_ctr_drbg);
+    mbedtls_ssl_setup(&g_ssl, &g_conf);
+    mbedtls_ssl_set_hostname(&g_ssl, IRC_HOST);
+    mbedtls_ssl_set_bio(&g_ssl, &app.sock, tls_send, tls_recv, NULL);
+    if (mbedtls_ssl_handshake(&g_ssl) != 0) {
+        close(app.sock); app.sock = -1;
+        mbedtls_ssl_free(&g_ssl); mbedtls_ssl_config_free(&g_conf);
+        mbedtls_entropy_free(&g_entropy); mbedtls_ctr_drbg_free(&g_ctr_drbg);
+        set_status("TLS failed"); return false;
+    }
+    g_tls_ok = true;
     fcntl(app.sock, F_SETFL, O_NONBLOCK);
+
     char msg[256];
-    snprintf(msg, sizeof(msg), "%s\r\n", app.oauth);       send(app.sock, msg, strlen(msg), 0);
-    snprintf(msg, sizeof(msg), "NICK %s\r\n", app.nick);   send(app.sock, msg, strlen(msg), 0);
-    snprintf(msg, sizeof(msg), "JOIN %s\r\n", app.channel);send(app.sock, msg, strlen(msg), 0);
+    snprintf(msg, sizeof(msg), "%s\r\n", app.oauth);
+    mbedtls_ssl_write(&g_ssl, (const unsigned char*)msg, strlen(msg));
+    snprintf(msg, sizeof(msg), "NICK %s\r\n", app.nick);
+    mbedtls_ssl_write(&g_ssl, (const unsigned char*)msg, strlen(msg));
+    snprintf(msg, sizeof(msg), "JOIN %s\r\n", app.channel);
+    mbedtls_ssl_write(&g_ssl, (const unsigned char*)msg, strlen(msg));
     app.irc_connected = true;
     app.irc_buf_len   = 0;
     set_status("Connected to %s", app.channel);
@@ -323,6 +372,12 @@ static bool irc_connect(void) {
 }
 
 static void irc_disconnect(void) {
+    if (g_tls_ok) {
+        mbedtls_ssl_close_notify(&g_ssl);
+        mbedtls_ssl_free(&g_ssl); mbedtls_ssl_config_free(&g_conf);
+        mbedtls_entropy_free(&g_entropy); mbedtls_ctr_drbg_free(&g_ctr_drbg);
+        g_tls_ok = false;
+    }
     if (app.sock >= 0) { close(app.sock); app.sock = -1; }
     video_stop();
     app.irc_connected = false;
@@ -330,19 +385,20 @@ static void irc_disconnect(void) {
 }
 
 static void irc_send_msg(const char *text) {
-    if (!app.irc_connected || app.sock < 0) return;
+    if (!app.irc_connected || !g_tls_ok) return;
     if (!app.logged_in) { chat_push("System", "Login to send messages"); return; }
     char msg[256];
     snprintf(msg, sizeof(msg), "PRIVMSG %s :%s\r\n", app.channel, text);
-    send(app.sock, msg, strlen(msg), 0);
+    mbedtls_ssl_write(&g_ssl, (const unsigned char*)msg, strlen(msg));
     chat_push(app.nick, text);
 }
 
 static void irc_poll(void) {
-    if (!app.irc_connected || app.sock < 0) return;
+    if (!app.irc_connected || !g_tls_ok) return;
     char tmp[512];
-    int n = recv(app.sock, tmp, sizeof(tmp)-1, 0);
-    if (n <= 0) return;
+    int n = mbedtls_ssl_read(&g_ssl, (unsigned char*)tmp, sizeof(tmp)-1);
+    if (n == MBEDTLS_ERR_SSL_WANT_READ || n == 0) return;
+    if (n < 0) { irc_disconnect(); return; }
     tmp[n] = 0;
     int copy = n;
     if (app.irc_buf_len + copy >= IRC_BUF-1) copy = IRC_BUF-1-app.irc_buf_len;
@@ -355,7 +411,7 @@ static void irc_poll(void) {
         if (strncmp(start, "PING", 4) == 0) {
             char pong[64];
             snprintf(pong, sizeof(pong), "PONG %s\r\n", start+5);
-            send(app.sock, pong, strlen(pong), 0);
+            mbedtls_ssl_write(&g_ssl, (const unsigned char*)pong, strlen(pong));
         } else if (strstr(start, "PRIVMSG")) {
             char *ne = strchr(start+1, '!'), *ms = strstr(start, " :");
             if (ne && ms) {

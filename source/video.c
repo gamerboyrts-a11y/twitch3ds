@@ -72,42 +72,52 @@ static char *http_get(const char *url, const char *auth_hdr) {
     return b.d;
 }
 
-/* ── Twitch HLS URL ────────────────────────────────────────── */
+/* ── Twitch HLS URL via GQL ────────────────────────────────── */
 static bool fetch_hls_url(void) {
-    /* Step 1: access token */
-    char url[512];
-    const char *tok = strncmp(V.oauth,"PASS oauth:",11)==0 ? V.oauth+11 :
-                      strncmp(V.oauth,"PASS ",5)==0        ? V.oauth+5  : V.oauth;
-    snprintf(url, sizeof(url),
-        "https://api.twitch.tv/api/channels/%s/access_token"
-        "?client_id=%s&oauth_token=%s", V.channel, V.client_id, tok);
-    char *resp = http_get(url, NULL);
-    if (!resp) return false;
+    char body[512];
+    snprintf(body, sizeof(body),
+        "[{\"operationName\":\"PlaybackAccessToken_Template\","
+        "\"query\":\"query PlaybackAccessToken_Template($login:String!,$isLive:Boolean!,$vodID:ID!,$isVod:Boolean!,$playerType:String!)"
+        "{streamPlaybackAccessToken(channelName:$login,params:{platform:\\\"web\\\",playerBackend:\\\"mediaplayer\\\",playerType:$playerType})"
+        "@include(if:$isLive){value signature}}\","
+        "\"variables\":{\"isLive\":true,\"login\":\"%s\",\"isVod\":false,\"vodID\":\"\",\"playerType\":\"site\"}}]",
+        V.channel);
 
-    /* Extract sig and token (minimal JSON scan) */
+    CURL *c = curl_easy_init(); if (!c) return false;
+    Buf buf = {malloc(8192), 0, 8192};
+    if (!buf.d) { curl_easy_cleanup(c); return false; }
+    buf.d[0] = 0;
+    struct curl_slist *h = curl_slist_append(NULL, "Content-Type: application/json");
+    h = curl_slist_append(h, "Client-ID: kimne78kx3ncx6brgo4mv6wki5h1ko");
+    curl_easy_setopt(c, CURLOPT_URL,           "https://gql.twitch.tv/gql");
+    curl_easy_setopt(c, CURLOPT_POSTFIELDS,    body);
+    curl_easy_setopt(c, CURLOPT_HTTPHEADER,    h);
+    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, cb);
+    curl_easy_setopt(c, CURLOPT_WRITEDATA,     &buf);
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER,1L);
+    curl_easy_setopt(c, CURLOPT_TIMEOUT,       15L);
+    curl_easy_perform(c);
+    curl_slist_free_all(h);
+    curl_easy_cleanup(c);
+
     char sig[128]={0}, token[2048]={0};
-    const char *ps = strstr(resp,"\"sig\"");
-    if (ps) { ps+=6; while(*ps==':'||*ps=='"'||*ps==' ')ps++;
-              const char *e=strchr(ps,'"'); if(e){ size_t l=e-ps<(int)sizeof(sig)-1?e-ps:sizeof(sig)-1; strncpy(sig,ps,l); } }
-    const char *pt = strstr(resp,"\"token\"");
-    if (pt) { pt+=7; while(*pt==':'||*pt==' ')pt++;
-              if(*pt=='"'){ pt++;
-                /* token value may contain escaped quotes - find unescaped closing " */
-                int i=0; while(*pt && i<(int)sizeof(token)-1){
-                    if(*pt=='"'&&*(pt-1)!='\\') break;
-                    token[i++]=*pt++;
-                } token[i]=0;
-              }
-    }
-    free(resp);
+    const char *ps = strstr(buf.d, "\"signature\"");
+    if (ps) { ps+=12; while(*ps==':'||*ps==' ')ps++;
+              if(*ps=='"'){ ps++; const char *e=strchr(ps,'"');
+                if(e){ size_t l=e-ps<sizeof(sig)-1?e-ps:sizeof(sig)-1; strncpy(sig,ps,l); }}}
+    const char *pv = strstr(buf.d, "\"value\"");
+    if (pv) { pv+=8; while(*pv==':'||*pv==' ')pv++;
+              if(*pv=='"'){ pv++;
+                int i=0; while(*pv&&i<(int)sizeof(token)-1){
+                    if(*pv=='"'&&(pv==buf.d||*(pv-1)!='\\'))break;
+                    token[i++]=*pv++; } token[i]=0; }}
+    free(buf.d);
     if (!sig[0] || !token[0]) return false;
 
-    /* Step 2: URL-encode the token */
-    CURL *c = curl_easy_init(); if (!c) return false;
-    char *etok = curl_easy_escape(c, token, 0);
-    curl_easy_cleanup(c);
+    CURL *ce = curl_easy_init(); if (!ce) return false;
+    char *etok = curl_easy_escape(ce, token, 0);
+    curl_easy_cleanup(ce);
     if (!etok) return false;
-
     snprintf(V.hls_url, sizeof(V.hls_url),
         "https://usher.twitchapps.com/api/channel/hls/%s.m3u8"
         "?sig=%s&token=%s&allow_source=true&type=any&fast_breadcrumbs=true",
