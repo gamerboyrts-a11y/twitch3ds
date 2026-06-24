@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <malloc.h>
+
+#include "log.h"
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netdb.h>
@@ -324,11 +326,11 @@ static bool irc_connect(void) {
     hints.ai_socktype = SOCK_STREAM;
     char port[8];
     snprintf(port, sizeof(port), "%d", IRC_PORT);
-    if (getaddrinfo(IRC_HOST, port, &hints, &res) != 0) { set_status("DNS failed"); return false; }
+    if (getaddrinfo(IRC_HOST, port, &hints, &res) != 0) { LOG("IRC DNS failed"); set_status("DNS failed"); return false; }
     app.sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (app.sock < 0) { freeaddrinfo(res); set_status("Socket error"); return false; }
+    if (app.sock < 0) { freeaddrinfo(res); LOG("IRC socket error"); set_status("Socket error"); return false; }
     if (connect(app.sock, res->ai_addr, res->ai_addrlen) < 0) {
-        freeaddrinfo(res); close(app.sock); app.sock = -1; set_status("Connect failed"); return false;
+        freeaddrinfo(res); close(app.sock); app.sock = -1; LOG("IRC connect failed errno=%d", errno); set_status("Connect failed"); return false;
     }
     freeaddrinfo(res);
 
@@ -348,13 +350,16 @@ static bool irc_connect(void) {
     mbedtls_ssl_setup(&g_ssl, &g_conf);
     mbedtls_ssl_set_hostname(&g_ssl, IRC_HOST);
     mbedtls_ssl_set_bio(&g_ssl, &app.sock, tls_send, tls_recv, NULL);
+    LOG("IRC TCP connected, starting TLS handshake");
     int tls_ret = mbedtls_ssl_handshake(&g_ssl);
     if (tls_ret != 0) {
         close(app.sock); app.sock = -1;
         mbedtls_ssl_free(&g_ssl); mbedtls_ssl_config_free(&g_conf);
         mbedtls_entropy_free(&g_entropy); mbedtls_ctr_drbg_free(&g_ctr_drbg);
+        LOG("IRC TLS handshake failed: -0x%04X", (unsigned)(-tls_ret));
         set_status("TLS err -0x%04X", (unsigned)(-tls_ret)); return false;
     }
+    LOG("IRC TLS ok, sending auth");
     g_tls_ok = true;
     fcntl(app.sock, F_SETFL, O_NONBLOCK);
 
@@ -1104,6 +1109,8 @@ int main(void) {
     app.viewer_count = 0;
 
     mkdir_config();
+    { FILE *f = fopen("/config/twitch3ds.log","w"); if(f) fclose(f); } /* clear log */
+    LOG("=== twitch3ds start ===");
     load_token();
     load_settings();
     load_history();

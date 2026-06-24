@@ -1,4 +1,5 @@
 #include "video.h"
+#include "log.h"
 #include <3ds/services/mvd.h>
 #include <curl/curl.h>
 #include <string.h>
@@ -286,24 +287,31 @@ static void vid_thread(void *arg) {
     char variant_url[512] = {0};
 
     /* get HLS URL */
+    LOG("vid: fetching token for %s", V.channel);
     if (!fetch_hls_url()) {
+        LOG("vid: fetch_hls_url FAILED");
         LightLock_Lock(&V.lock); V.offline = true; LightLock_Unlock(&V.lock);
         return;
     }
+    LOG("vid: hls_url=%.60s", V.hls_url);
 
     /* get master m3u8 → pick lowest quality variant */
     {
         char *master = http_get(V.hls_url, NULL);
         if (!master) {
+            LOG("vid: master m3u8 download FAILED");
             LightLock_Lock(&V.lock); V.offline = true; LightLock_Unlock(&V.lock);
             return;
         }
+        LOG("vid: master m3u8 ok len=%d", (int)strlen(master));
         char *var = m3u8_lowest_variant(master);
         free(master);
         if (!var) {
+            LOG("vid: no variant found in m3u8");
             LightLock_Lock(&V.lock); V.offline = true; LightLock_Unlock(&V.lock);
             return;
         }
+        LOG("vid: variant=%.80s", var);
         strncpy(variant_url, var, sizeof(variant_url)-1);
         free(var);
     }
@@ -312,15 +320,17 @@ static void vid_thread(void *arg) {
     mvdstdGenerateDefaultConfig(&V.cfg, 0, 0, OUT_W, OUT_H,
                                  NULL, (u32*)V.outbuf, NULL);
     MVDSTD_SetConfig(&V.cfg);
+    LOG("vid: MVD config set, entering stream loop");
 
     /* stream loop */
     while (V.active) {
         char *media = http_get(variant_url, NULL);
-        if (!media) { svcSleepThread(2000000000LL); continue; }
+        if (!media) { LOG("vid: media m3u8 fetch failed"); svcSleepThread(2000000000LL); continue; }
         char *seg = m3u8_last_segment(media);
         free(media);
         if (!seg) { svcSleepThread(2000000000LL); continue; }
         if (strcmp(seg, V.last_seg) != 0) {
+            LOG("vid: new seg %.60s", seg);
             strncpy(V.last_seg, seg, sizeof(V.last_seg)-1);
             process_segment(seg);
         }
