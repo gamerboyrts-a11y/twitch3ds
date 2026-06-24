@@ -128,7 +128,7 @@ static bool fetch_hls_url(void) {
     curl_easy_cleanup(ce);
     if (!etok) return false;
     snprintf(V.hls_url, sizeof(V.hls_url),
-        "https://usher.twitchapps.com/api/channel/hls/%s.m3u8"
+        "https://usher.twitch.tv/api/channel/hls/%s.m3u8"
         "?sig=%s&token=%s&allow_source=true&type=any&fast_breadcrumbs=true",
         V.channel, sig, etok);
     curl_free(etok);
