@@ -105,6 +105,17 @@ static bool fetch_hls_url(void) {
     buf.d[0] = 0;
     struct curl_slist *h = curl_slist_append(NULL, "Content-Type: application/json");
     h = curl_slist_append(h, "Client-ID: kimne78kx3ncx6brgo4mv6wki5h1ko");
+    /* Add bearer auth if logged in — Twitch GQL now requires it */
+    {
+        const char *tok = V.oauth;
+        if (strncmp(tok, "PASS ", 5) == 0) tok += 5;
+        if (strncmp(tok, "oauth:", 6) == 0) tok += 6;
+        if (tok[0] && strcmp(tok, "schmoopiie") != 0) {
+            char ahdr[160];
+            snprintf(ahdr, sizeof(ahdr), "Authorization: Bearer %s", tok);
+            h = curl_slist_append(h, ahdr);
+        }
+    }
     curl_easy_setopt(c, CURLOPT_URL,           "https://gql.twitch.tv/gql");
     curl_easy_setopt(c, CURLOPT_POSTFIELDS,    body);
     curl_easy_setopt(c, CURLOPT_HTTPHEADER,    h);
@@ -162,8 +173,6 @@ static bool fetch_hls_url(void) {
             V.usher_resolve[0] = 0;
         }
     }
-    return true;
-    curl_free(etok);
     return true;
 }
 
