@@ -160,7 +160,7 @@ static bool fetch_hls_url(void) {
         lc[i] = (V.channel[i] >= 'A' && V.channel[i] <= 'Z') ? V.channel[i]+32 : V.channel[i];
     snprintf(V.hls_url, sizeof(V.hls_url),
         "https://usher.ttvnw.net/api/channel/hls/%s.m3u8"
-        "?sig=%s&token=%s&allow_source=true&p=160&type=any&fast_breadcrumbs=true",
+        "?sig=%s&token=%s&allow_source=true&allow_spectre=true&fast_breadcrumbs=true",
         lc, sig, etok);
     curl_free(etok);
 
@@ -353,10 +353,8 @@ static void vid_thread(void *arg) {
 
     /* get master m3u8 → pick lowest quality variant */
     {
-        char auth_hdr[160] = {0};
-        const char *tok = bearer_token();
-        if (tok) snprintf(auth_hdr, sizeof(auth_hdr), "Authorization: Bearer %s", tok);
-        char *master = http_get(V.hls_url, auth_hdr[0] ? auth_hdr : NULL);
+        /* usher auth is via URL token/sig params only — no Authorization header */
+        char *master = http_get(V.hls_url, NULL);
         if (!master) {
             LOG("vid: master m3u8 download FAILED");
             LightLock_Lock(&V.lock); V.offline = true; LightLock_Unlock(&V.lock);
