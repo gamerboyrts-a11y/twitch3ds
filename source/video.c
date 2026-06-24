@@ -31,7 +31,7 @@ static struct {
     char            channel[48];
     char            oauth[128];
     char            client_id[48];
-    char            hls_url[512];
+    char            hls_url[4096];
     char            last_seg[512];
 } V;
 
