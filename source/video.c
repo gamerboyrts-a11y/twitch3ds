@@ -136,10 +136,14 @@ static bool fetch_hls_url(void) {
     char *etok = curl_easy_escape(ce, token, 0);
     curl_easy_cleanup(ce);
     if (!etok) return false;
+    /* lowercase channel — usher is case-sensitive */
+    char lc[48] = {0};
+    for (int i = 0; V.channel[i] && i < (int)sizeof(lc)-1; i++)
+        lc[i] = (V.channel[i] >= 'A' && V.channel[i] <= 'Z') ? V.channel[i]+32 : V.channel[i];
     snprintf(V.hls_url, sizeof(V.hls_url),
         "https://usher.ttvnw.net/api/channel/hls/%s.m3u8"
         "?sig=%s&token=%s&allow_source=true&p=160&type=any&fast_breadcrumbs=true",
-        V.channel, sig, etok);
+        lc, sig, etok);
     curl_free(etok);
 
     /* Pre-resolve usher hostname using system getaddrinfo (curl DNS fails on 3DS for this domain) */
