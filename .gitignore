@@ -1,0 +1,14 @@
+# Build output
+build/
+*.elf
+*.3dsx
+*.smdh
+*.cia
+*.cci
+*.3ds
+
+# Editor / OS
+.vscode/
+*.swp
+Thumbs.db
+.DS_Store
