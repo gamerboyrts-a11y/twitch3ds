@@ -742,7 +742,7 @@ static void draw_chat_tab(void) {
     int draw_count = total - draw_start;
     if (draw_count > vis) draw_count = vis;
     for (int i = 0; i < draw_count; i++) {
-        int idx = (draw_start + i) % MAX_LINES;
+        int idx = (app.line_head - app.line_count + draw_start + i + MAX_LINES * 2) % MAX_LINES;
         float y = CHAT_TOP + 2 + i*LINE_H;
         ChatLine *cl = &app.lines[idx];
         u32 nc = COL_PURPLE_LT;
@@ -947,7 +947,6 @@ int main(void) {
     romfsInit();
     cfguInit();
     acInit();
-    httpcInit(0);
     socInit((u32*)memalign(0x1000, 0x100000), 0x100000);
     curl_global_init(CURL_GLOBAL_ALL);
 
@@ -1018,7 +1017,6 @@ int main(void) {
     C3D_Fini();
     gfxExit();
     socExit();
-    httpcExit();
     acExit();
     cfguExit();
     romfsExit();
