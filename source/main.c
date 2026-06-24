@@ -348,11 +348,12 @@ static bool irc_connect(void) {
     mbedtls_ssl_setup(&g_ssl, &g_conf);
     mbedtls_ssl_set_hostname(&g_ssl, IRC_HOST);
     mbedtls_ssl_set_bio(&g_ssl, &app.sock, tls_send, tls_recv, NULL);
-    if (mbedtls_ssl_handshake(&g_ssl) != 0) {
+    int tls_ret = mbedtls_ssl_handshake(&g_ssl);
+    if (tls_ret != 0) {
         close(app.sock); app.sock = -1;
         mbedtls_ssl_free(&g_ssl); mbedtls_ssl_config_free(&g_conf);
         mbedtls_entropy_free(&g_entropy); mbedtls_ctr_drbg_free(&g_ctr_drbg);
-        set_status("TLS failed"); return false;
+        set_status("TLS err -0x%04X", (unsigned)(-tls_ret)); return false;
     }
     g_tls_ok = true;
     fcntl(app.sock, F_SETFL, O_NONBLOCK);
@@ -801,8 +802,9 @@ static void draw_top(void) {
         }
 
     } else if (app.state == STATE_ERROR) {
-        draw_text(118, 108, 0.55f, COL_RED,  "Connection Error");
-        draw_text( 80, 130, 0.40f, COL_GRAY, "Open Channels tab and try again");
+        draw_text( 80, 100, 0.50f, COL_RED,  "Connection Error");
+        draw_text(  4, 122, 0.36f, COL_YELLOW, app.status_msg[0] ? app.status_msg : "Open Channels tab to retry");
+        draw_text(  4, 142, 0.34f, COL_GRAY, "Open Channels tab and try again");
 
     } else {
         if (video_is_offline()) {
@@ -893,7 +895,8 @@ static void draw_chat_tab(void) {
     draw_rect(BOT_W-46, INPUT_BAR_Y+2, 44, INPUT_BAR_H-4, COL_BTN);
     draw_text(BOT_W-40, INPUT_BAR_Y+6, 0.38f, COL_WHITE, "SEND");
     char disp[140];
-    snprintf(disp, sizeof(disp), app.input[0] ? "> %s_" : "> Tap SEND or press A...", app.input);
+    snprintf(disp, sizeof(disp), app.input[0] ? "> %s_" :
+             (app.status_msg[0] ? app.status_msg : "> Tap SEND or press A..."), app.input);
     draw_text(4, INPUT_BAR_Y+6, 0.38f, app.input[0] ? COL_WHITE : COL_GRAY, disp);
 }
 
