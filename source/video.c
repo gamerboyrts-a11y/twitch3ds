@@ -39,6 +39,15 @@ static struct {
     char            usher_resolve[64]; /* "usher.ttvnw.net:443:IP" */
 } V;
 
+/* Extract bearer token from V.oauth ("PASS oauth:TOKEN" → "TOKEN").
+   Returns pointer into V.oauth; NULL if anonymous. */
+static const char *bearer_token(void) {
+    const char *t = V.oauth;
+    if (strncmp(t, "PASS ", 5) == 0) t += 5;
+    if (strncmp(t, "oauth:", 6) == 0) t += 6;
+    return (t[0] && strcmp(t, "schmoopiie") != 0) ? t : NULL;
+}
+
 /* ── curl write callback ───────────────────────────────────── */
 typedef struct { char *d; size_t len, cap; } Buf;
 static size_t cb(void *p, size_t s, size_t n, void *u) {
@@ -107,10 +116,8 @@ static bool fetch_hls_url(void) {
     h = curl_slist_append(h, "Client-ID: kimne78kx3ncx6brgo4mv6wki5h1ko");
     /* Add bearer auth if logged in — Twitch GQL now requires it */
     {
-        const char *tok = V.oauth;
-        if (strncmp(tok, "PASS ", 5) == 0) tok += 5;
-        if (strncmp(tok, "oauth:", 6) == 0) tok += 6;
-        if (tok[0] && strcmp(tok, "schmoopiie") != 0) {
+        const char *tok = bearer_token();
+        if (tok) {
             char ahdr[160];
             snprintf(ahdr, sizeof(ahdr), "Authorization: Bearer %s", tok);
             h = curl_slist_append(h, ahdr);
@@ -346,7 +353,10 @@ static void vid_thread(void *arg) {
 
     /* get master m3u8 → pick lowest quality variant */
     {
-        char *master = http_get(V.hls_url, NULL);
+        char auth_hdr[160] = {0};
+        const char *tok = bearer_token();
+        if (tok) snprintf(auth_hdr, sizeof(auth_hdr), "Authorization: Bearer %s", tok);
+        char *master = http_get(V.hls_url, auth_hdr[0] ? auth_hdr : NULL);
         if (!master) {
             LOG("vid: master m3u8 download FAILED");
             LightLock_Lock(&V.lock); V.offline = true; LightLock_Unlock(&V.lock);
