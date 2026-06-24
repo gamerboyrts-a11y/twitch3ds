@@ -55,7 +55,7 @@ static char *http_get(const char *url, const char *auth_hdr) {
     curl_easy_setopt(c, CURLOPT_URL,           url);
     curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, cb);
     curl_easy_setopt(c, CURLOPT_WRITEDATA,     &b);
-    curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER,1L);
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER,0L);
     curl_easy_setopt(c, CURLOPT_TIMEOUT,       15L);
     curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION,1L);
     if (auth_hdr) {
@@ -94,7 +94,7 @@ static bool fetch_hls_url(void) {
     curl_easy_setopt(c, CURLOPT_HTTPHEADER,    h);
     curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, cb);
     curl_easy_setopt(c, CURLOPT_WRITEDATA,     &buf);
-    curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER,1L);
+    curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER,0L);
     curl_easy_setopt(c, CURLOPT_TIMEOUT,       15L);
     curl_easy_perform(c);
     curl_slist_free_all(h);
