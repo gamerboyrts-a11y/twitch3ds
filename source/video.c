@@ -59,17 +59,21 @@ static char *http_get(const char *url, const char *auth_hdr) {
     curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER,0L);
     curl_easy_setopt(c, CURLOPT_TIMEOUT,       15L);
     curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION,1L);
+    CURLcode res;
     if (auth_hdr) {
         struct curl_slist *h = curl_slist_append(NULL, auth_hdr);
         curl_easy_setopt(c, CURLOPT_HTTPHEADER, h);
-        curl_easy_perform(c);
+        res = curl_easy_perform(c);
         curl_slist_free_all(h);
     } else {
-        curl_easy_perform(c);
+        res = curl_easy_perform(c);
     }
     long code = 0; curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
     curl_easy_cleanup(c);
-    if (code != 200) { LOG("http_get %ld url=%.60s body=%.80s", code, url, b.d?b.d:""); free(b.d); return NULL; }
+    if (code != 200) {
+        LOG("http_get curl=%d http=%ld urllen=%d url=%.80s", (int)res, code, (int)strlen(url), url);
+        free(b.d); return NULL;
+    }
     return b.d;
 }
 
