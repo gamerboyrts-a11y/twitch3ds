@@ -379,7 +379,8 @@ void video_start(const char *channel, const char *oauth_pass, const char *client
     strncpy(V.client_id, client_id, sizeof(V.client_id)-1);
     V.hls_url[0] = 0; V.last_seg[0] = 0;
     V.has_frame = false; V.offline = false; V.active = true;
-    V.thread = threadCreate(vid_thread, NULL, 64*1024, 0x25, 2, false);
+    V.thread = threadCreate(vid_thread, NULL, 128*1024, 0x25, -1, false);
+    LOG("video_start: ch=%s thread=%p", V.channel, (void*)V.thread);
 }
 
 void video_stop(void) {
