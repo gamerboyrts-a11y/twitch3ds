@@ -77,11 +77,12 @@ static char *http_get(const char *url, const char *auth_hdr) {
 static bool fetch_hls_url(void) {
     char body[512];
     snprintf(body, sizeof(body),
-        "[{\"operationName\":\"PlaybackAccessToken_Template\","
-        "\"query\":\"query PlaybackAccessToken_Template($login:String!,$isLive:Boolean!,$vodID:ID!,$isVod:Boolean!,$playerType:String!)"
-        "{streamPlaybackAccessToken(channelName:$login,params:{platform:\\\"web\\\",playerBackend:\\\"mediaplayer\\\",playerType:$playerType})"
-        "@include(if:$isLive){value signature}}\","
-        "\"variables\":{\"isLive\":true,\"login\":\"%s\",\"isVod\":false,\"vodID\":\"\",\"playerType\":\"site\"}}]",
+        "[{\"operationName\":\"PlaybackAccessToken\","
+        "\"query\":\"query PlaybackAccessToken($login:String!,$playerType:String!)"
+        "{streamPlaybackAccessToken(channelName:$login,"
+        "params:{platform:\\\"web\\\",playerBackend:\\\"mediaplayer\\\",playerType:$playerType})"
+        "{value signature}}\","
+        "\"variables\":{\"login\":\"%s\",\"playerType\":\"site\"}}]",
         V.channel);
 
     CURL *c = curl_easy_init(); if (!c) return false;

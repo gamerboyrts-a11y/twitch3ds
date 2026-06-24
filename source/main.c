@@ -364,8 +364,11 @@ static bool irc_connect(void) {
     fcntl(app.sock, F_SETFL, O_NONBLOCK);
 
     char msg[256];
-    snprintf(msg, sizeof(msg), "%s\r\n", app.oauth);
-    mbedtls_ssl_write(&g_ssl, (const unsigned char*)msg, strlen(msg));
+    /* Only send PASS for authenticated users — Twitch rejects anonymous PASS */
+    if (app.logged_in) {
+        snprintf(msg, sizeof(msg), "%s\r\n", app.oauth);
+        mbedtls_ssl_write(&g_ssl, (const unsigned char*)msg, strlen(msg));
+    }
     snprintf(msg, sizeof(msg), "NICK %s\r\n", app.nick);
     mbedtls_ssl_write(&g_ssl, (const unsigned char*)msg, strlen(msg));
     snprintf(msg, sizeof(msg), "JOIN %s\r\n", app.channel);
