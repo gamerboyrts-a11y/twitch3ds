@@ -81,7 +81,7 @@
 typedef enum { TAB_CHAT=0, TAB_CHANNELS=1, TAB_SETTINGS=2 } TabID;
 typedef enum { QUAL_160P=0, QUAL_360P=1, QUAL_480P=2 } VideoQuality;
 static const char *quality_labels[] = {"160p","360p","480p"};
-typedef enum { STATE_WATCHING, STATE_ERROR, STATE_LOGIN_DEVICE, STATE_LOGIN_QR } AppState;
+typedef enum { STATE_WATCHING, STATE_ERROR, STATE_LOGIN_DEVICE } AppState;
 typedef struct { char nick[32]; char text[MAX_LINE_LEN]; } ChatLine;
 
 /* ── App struct ──────────────────────────────────────────── */
@@ -394,15 +394,6 @@ static void join_channel(const char *chan) {
     app.tab = TAB_CHAT;
 }
 
-static void do_manual_login(void) {
-    char token[128] = {0}, nick[32] = {0};
-    if (!swkbd_get(token, sizeof(token), "Enter oauth:token", false)) return;
-    if (!swkbd_get(nick,  sizeof(nick),  "Enter your Twitch username", false)) return;
-    save_token(token, nick);
-    load_token();
-    set_status("Logged in as %s", app.nick);
-    chat_push("System", "Login saved");
-}
 
 /* ═══════════════════════════════════════════════════════════
  *  DEVICE CODE FLOW (DCF)
@@ -633,14 +624,6 @@ static void dcf_poll_tick(void) {
     else               app.state = STATE_ERROR;
 }
 
-/* ── QR login stub (unchanged) ───────────────────────────── */
-static void do_qr_login_start(void) {
-    app.state = STATE_LOGIN_QR;
-    strcpy(app.verify_url, "https://www.twitch.tv/activate");
-    set_status("QR view opened");
-    chat_push("System", "QR rendering not implemented yet");
-}
-
 /* ═══════════════════════════════════════════════════════════
  *  DRAW — TOP SCREEN
  * ═══════════════════════════════════════════════════════════ */
@@ -677,13 +660,6 @@ static void draw_top(void) {
             snprintf(timer, sizeof(timer), "Expires in %ds", remaining);
             draw_text(10, 208, 0.32f, COL_GRAY, timer);
         }
-
-    } else if (app.state == STATE_LOGIN_QR) {
-        draw_text(10,  20, 0.55f, COL_PURPLE_LT, "QR Login");
-        draw_text(10,  52, 0.42f, COL_WHITE,  "QR generation is not implemented yet.");
-        draw_text(10,  74, 0.42f, COL_YELLOW, "Use Enter Token for now.");
-        draw_text(10, 106, 0.40f, COL_WHITE,  "Open on phone or PC:");
-        draw_text(10, 124, 0.42f, COL_CYAN,   app.verify_url);
 
     } else if (app.state == STATE_ERROR) {
         draw_text(118, 108, 0.55f, COL_RED,  "Connection Error");
@@ -809,10 +785,8 @@ static void draw_settings_tab(void) {
         draw_text(8, y+3, 0.34f, COL_WHITE, "Logout"); y += 20;
     } else {
         draw_text(4, y, 0.34f, COL_GRAY, "Not logged in (read-only)"); y += 14;
-        draw_rect(4,   y, 92, 16, COL_BTN); draw_text(8,   y+3, 0.33f, COL_WHITE, "Device Code");
-        draw_rect(100, y, 56, 16, COL_BTN); draw_text(104, y+3, 0.33f, COL_WHITE, "QR Code");
-        y += 20;
-        draw_rect(4, y, 90, 16, COL_PURPLE_DK); draw_text(8, y+3, 0.33f, COL_WHITE, "Enter Token");
+        draw_rect(4, y, BOT_W-8, 16, COL_BTN);
+        draw_text(8, y+3, 0.34f, COL_WHITE, "Login at twitch.tv/activate");
         y += 20;
     }
     draw_rect(0, y, BOT_W, 1, COL_DIVIDER); y += 6;
@@ -889,10 +863,7 @@ static void handle_touch(touchPosition *t) {
             if (app.logged_in) {
                 if (touch_in(t, 4, (int)y, 80, 16)) do_logout();
             } else {
-                if (touch_in(t, 4,   (int)y, 92, 16)) do_device_login_start();
-                if (touch_in(t, 100, (int)y, 56, 16)) do_qr_login_start();
-                y += 20;
-                if (touch_in(t, 4, (int)y, 90, 16)) do_manual_login();
+                if (touch_in(t, 4, (int)y, BOT_W-8, 16)) do_device_login_start();
             }
             y += 48;
             if (touch_in(t, BOT_W-54, (int)y-2, 50, 16)) { app.show_overlay = !app.show_overlay; save_settings(); }
