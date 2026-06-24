@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <curl/curl.h>
+#include "video.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_JPEG
@@ -323,6 +324,7 @@ static bool irc_connect(void) {
 
 static void irc_disconnect(void) {
     if (app.sock >= 0) { close(app.sock); app.sock = -1; }
+    video_stop();
     app.irc_connected = false;
     app.irc_buf_len   = 0;
 }
@@ -410,8 +412,13 @@ static void join_channel(const char *chan) {
     app.thumb_loaded = false;
     strcpy(app.stream_game,  "Twitch");
     app.viewer_count = 0;
-    if (irc_connect()) app.state = STATE_WATCHING;
-    else               app.state = STATE_ERROR;
+    if (irc_connect()) {
+        app.state = STATE_WATCHING;
+        const char *ch = app.channel[0]=='#' ? app.channel+1 : app.channel;
+        video_start(ch, app.oauth, CLIENT_ID);
+    } else {
+        app.state = STATE_ERROR;
+    }
     app.tab = TAB_CHAT;
 }
 
@@ -742,11 +749,16 @@ static void draw_top(void) {
         draw_text( 80, 130, 0.40f, COL_GRAY, "Open Channels tab and try again");
 
     } else {
-        if (app.thumb_loaded) {
+        if (video_is_offline()) {
+            draw_text(60,  98, 0.55f, COL_RED,  "Channel is Offline");
+            draw_text(60, 122, 0.40f, COL_GRAY, "No live stream right now");
+        } else if (video_is_active()) {
+            video_draw_top(0, 0);
+        } else if (app.thumb_loaded) {
             C2D_DrawImageAt(app.thumb_img, 0, (TOP_H - THUMB_H) / 2.0f, 0.5f, NULL, 1.0f, 1.0f);
         } else {
             draw_text(120, 108, 0.55f, COL_GRAY, "[ LIVE VIDEO ]");
-            draw_text( 60, 126, 0.40f, COL_GRAY, "Fetching stream thumbnail...");
+            draw_text( 60, 126, 0.40f, COL_GRAY, "Connecting...");
         }
     }
 
@@ -1000,6 +1012,7 @@ int main(void) {
     acInit();
     socInit((u32*)memalign(0x1000, 0x100000), 0x100000);
     curl_global_init(CURL_GLOBAL_ALL);
+    video_init();
 
     app.top  = C2D_CreateScreenTarget(GFX_TOP,    GFX_LEFT);
     app.bot  = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
@@ -1076,6 +1089,7 @@ int main(void) {
 
     save_settings();
     irc_disconnect();
+    video_exit();
     curl_global_cleanup();
     C2D_TextBufDelete(app.tbuf);
     C2D_FontFree(app.font);
