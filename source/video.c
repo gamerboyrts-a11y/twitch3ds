@@ -78,14 +78,14 @@ static char *http_get(const char *url, const char *auth_hdr) {
         resolve_list = curl_slist_append(NULL, V.usher_resolve);
     if (resolve_list) curl_easy_setopt(c, CURLOPT_RESOLVE, resolve_list);
     CURLcode res;
-    if (auth_hdr) {
-        struct curl_slist *h = curl_slist_append(NULL, auth_hdr);
-        curl_easy_setopt(c, CURLOPT_HTTPHEADER, h);
-        res = curl_easy_perform(c);
-        curl_slist_free_all(h);
-    } else {
-        res = curl_easy_perform(c);
-    }
+    struct curl_slist *headers = NULL;
+    if (auth_hdr) headers = curl_slist_append(headers, auth_hdr);
+    /* usher requires Client-ID matching the one used for the GQL token */
+    if (strstr(url, "usher.ttvnw.net"))
+        headers = curl_slist_append(headers, "Client-ID: kimne78kx3ncx6brgo4mv6wki5h1ko");
+    if (headers) curl_easy_setopt(c, CURLOPT_HTTPHEADER, headers);
+    res = curl_easy_perform(c);
+    if (headers) curl_slist_free_all(headers);
     long code = 0; curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
     curl_easy_cleanup(c);
     if (resolve_list) curl_slist_free_all(resolve_list);
