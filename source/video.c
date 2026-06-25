@@ -393,7 +393,7 @@ static void nal_feed(const u8 *data, int len) {
     memcpy(V.nalbuf, data, len);
     GSPGPU_FlushDataCache(V.nalbuf, len);
     Result r = mvdstdProcessVideoFrame(V.nalbuf, len, 0, NULL);
-    if (MVD_CHECKNALUPROC_SUCCESS(r) && (r & MVD_STATUS_FRAMEREADY)) {
+    if (MVD_CHECKNALUPROC_SUCCESS(r) && (r == MVD_STATUS_FRAMEREADY)) {
         mvdstdRenderVideoFrame(&V.cfg, true);
         LightLock_Lock(&V.lock);
         V.has_frame = true;
@@ -656,7 +656,8 @@ void video_draw_top(float x, float y) {
     LightLock_Unlock(&V.lock);
 
     if (ready && V.stgbuf) {
-        /* Copy decoded RGB565 rows into the staging buffer */
+        /* Invalidate CPU cache for outbuf — MVD writes via DMA, cache holds stale zeros */
+        GSPGPU_InvalidateDataCache(V.outbuf, OUT_W * OUT_H * 2);
         for (int row = 0; row < OUT_H; row++)
             memcpy(V.stgbuf + row*TEX_W*2,
                    V.outbuf + row*OUT_W*2, OUT_W*2);
