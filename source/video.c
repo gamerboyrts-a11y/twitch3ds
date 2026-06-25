@@ -667,6 +667,7 @@ void video_draw_top(float x, float y) {
             GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGB565)  |
             GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB565) |
             GX_TRANSFER_FLIP_VERT(1)                       |
+            GX_TRANSFER_OUT_TILED(1)                       |
             GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
         /* Mark texture as containing real pixel data */
         V.tex_valid = true;

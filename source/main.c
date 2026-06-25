@@ -1,24 +1,28 @@
 #include <3ds.h>
-#include <citro2d.h>
-#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <stdarg.h>
-#include <malloc.h>
-
-#include "log.h"
-#include <arpa/inet.h>
+#include <stdbool.h>
 #include <sys/socket.h>
 #include <netdb.h>
-#include <unistd.h>
 #include <fcntl.h>
-#include <sys/stat.h>
+#include <errno.h>
+
+#include "log.h"
 #include <curl/curl.h>
-#include "video.h"
 #include <mbedtls/ssl.h>
 #include <mbedtls/entropy.h>
 #include <mbedtls/ctr_drbg.h>
-#include <errno.h>
+#include <mbedtls/error.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <citro3d.h>
+#include <citro2d.h>
+#include "video.h"
+#include <tex3ds.h>
+#include <malloc.h>
+#include <arpa/inet.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_JPEG
@@ -26,7 +30,7 @@
 #include "stb_image.h"
 
 /* ── App defines ─────────────────────────────────────────── */
-#define CLIENT_ID       "l8ec56m4drzmzbq2vh6nmmz6hehcp4"
+#define CLIENT_ID       "kimne78kx3ncx6brgo4mv6wki5h1ko"
 #define DEFAULT_CHANNEL "xqc"
 #define TOKEN_FILE      "/config/twitch_token.txt"
 #define SETTINGS_FILE   "/config/twitch_settings.txt"
@@ -40,9 +44,6 @@
 
 #define TOP_W 400
 #define TOP_H 240
-
-
-#define TOP_H 240
 #define BOT_W 320
 #define BOT_H 240
 
@@ -50,23 +51,23 @@
 #define IRC_PORT 6697
 #define IRC_BUF  2048
 
-#define TAB_H        22
-#define CHAT_TOP     (TAB_H)
-#define INPUT_BAR_H  26
-#define INPUT_BAR_Y  (BOT_H - INPUT_BAR_H)
-#define CHAT_BOT     (INPUT_BAR_Y - 1)
-#define CHAT_LEFT    4
-#define LINE_H       20
-#define MAX_LINES    64
-#define MAX_LINE_LEN 55
-#define VISIBLE_LINES ((CHAT_BOT - CHAT_TOP) / LINE_H)
-#define MAX_HISTORY  10
+#define TAB_H          22
+#define CHAT_TOP       (TAB_H)
+#define INPUT_BAR_H    26
+#define INPUT_BAR_Y    (BOT_H - INPUT_BAR_H)
+#define CHAT_BOT       (INPUT_BAR_Y - 1)
+#define CHAT_LEFT      4
+#define LINE_H         20
+#define MAX_LINES      64
+#define MAX_LINE_LEN   55
+#define VISIBLE_LINES  ((CHAT_BOT - CHAT_TOP) / LINE_H)
+#define MAX_HISTORY    10
 
 /* ── DCF defines ─────────────────────────────────────────── */
-#define DCF_DEVICE_URL    "https://id.twitch.tv/oauth2/device"
-#define DCF_TOKEN_URL     "https://id.twitch.tv/oauth2/token"
-#define DCF_SCOPES        "chat:read+chat:edit"
-#define DCF_MAX_INTERVAL  30
+#define DCF_DEVICE_URL      "https://id.twitch.tv/oauth2/device"
+#define DCF_TOKEN_URL       "https://id.twitch.tv/oauth2/token"
+#define DCF_SCOPES          "chat:read+chat:edit"
+#define DCF_MAX_INTERVAL    30
 #define DCF_DEVICE_CODE_LEN 64
 #define DCF_TOKEN_LEN       128
 
@@ -107,33 +108,33 @@ typedef struct { char nick[32]; char text[MAX_LINE_LEN]; } ChatLine;
 
 /* ── App struct ──────────────────────────────────────────── */
 typedef struct {
-    char  oauth[128];
-    char  nick[32];
-    bool  logged_in;
-    char  channel[48];
-    char  history[MAX_HISTORY][48];
-    int   history_count;
-    int   history_sel;
-    char  stream_title[128];
-    char  stream_game[64];
-    int   viewer_count;
-    int   sock;
-    bool  irc_connected;
-    char  irc_buf[IRC_BUF];
-    int   irc_buf_len;
+    char oauth[128];
+    char nick[32];
+    bool logged_in;
+    char channel[48];
+    char history[MAX_HISTORY][48];
+    int  history_count;
+    int  history_sel;
+    char stream_title[128];
+    char stream_game[64];
+    int  viewer_count;
+    int  sock;
+    bool irc_connected;
+    char irc_buf[IRC_BUF];
+    int  irc_buf_len;
     ChatLine lines[MAX_LINES];
-    int   line_head;
-    int   line_count;
-    int   scroll_offset;
-    bool  scroll_locked;
-    char  input[128];
+    int  line_head;
+    int  line_count;
+    int  scroll_offset;
+    bool scroll_locked;
+    char input[128];
     AppState state;
-    TabID tab;
-    char  status_msg[96];
-    bool  show_overlay;
+    TabID    tab;
+    char     status_msg[96];
+    bool     show_overlay;
     VideoQuality quality;
-    char  user_code[32];
-    char  verify_url[256];          /* enlarged from 96 to 256 */
+    char user_code[32];
+    char verify_url[256];
     C3D_RenderTarget *top;
     C3D_RenderTarget *bot;
     C2D_Font  font;
@@ -141,26 +142,29 @@ typedef struct {
 
     /* Device Code Flow state */
     struct {
-        bool  polling;
-        char  device_code[DCF_DEVICE_CODE_LEN];
-        int   interval;             /* seconds between polls          */
-        int   expires_in;           /* seconds until code expires     */
-        u64   last_poll_tick;       /* osGetTime() at last poll       */
-        u64   start_tick;           /* osGetTime() when flow started  */
+        bool polling;
+        char device_code[DCF_DEVICE_CODE_LEN];
+        int  interval;
+        int  expires_in;
+        u64  last_poll_tick;
+        u64  start_tick;
     } dcf;
 
     /* Live thumbnail */
-    C3D_Tex           thumb_tex;
+    C3D_Tex          thumb_tex;
     Tex3DS_SubTexture thumb_st;
-    C2D_Image         thumb_img;
-    bool              thumb_loaded;
-    u64               thumb_last_tick;
+    C2D_Image        thumb_img;
+    bool             thumb_loaded;
+    u64              thumb_last_tick;
+
+    /* Video state tracking — separate from IRC */
+    bool vid_ever_started;
 } App;
 
 static App app;
 
 /* ═══════════════════════════════════════════════════════════
- *  UTILITY / DRAW HELPERS
+ * UTILITY / DRAW HELPERS
  * ═══════════════════════════════════════════════════════════ */
 
 static void begin_text_frame(void) { C2D_TextBufClear(app.tbuf); }
@@ -188,7 +192,7 @@ static bool touch_in(touchPosition *t, int x, int y, int w, int h) {
 }
 
 /* ═══════════════════════════════════════════════════════════
- *  FILESYSTEM HELPERS
+ * FILESYSTEM HELPERS
  * ═══════════════════════════════════════════════════════════ */
 
 static void mkdir_config(void) { mkdir("/config", 0777); }
@@ -218,13 +222,15 @@ static void load_history(void) {
 static void history_push(const char *chan) {
     for (int i = 0; i < app.history_count; i++) {
         if (strcmp(app.history[i], chan) == 0) {
-            memmove(&app.history[i], &app.history[i+1], (app.history_count-i-1)*sizeof(app.history[0]));
+            memmove(&app.history[i], &app.history[i+1],
+                    (app.history_count-i-1)*sizeof(app.history[0]));
             app.history_count--;
             break;
         }
     }
     if (app.history_count >= MAX_HISTORY) app.history_count = MAX_HISTORY-1;
-    memmove(&app.history[1], &app.history[0], app.history_count*sizeof(app.history[0]));
+    memmove(&app.history[1], &app.history[0],
+            app.history_count*sizeof(app.history[0]));
     strncpy(app.history[0], chan, 47); app.history[0][47] = 0;
     app.history_count++;
     save_history();
@@ -242,15 +248,15 @@ static void save_settings(void) {
 static void load_settings(void) {
     FILE *f = fopen(SETTINGS_FILE, "r");
     snprintf(app.channel, sizeof(app.channel), "#%s", DEFAULT_CHANNEL);
-    app.quality = QUAL_360P;
+    app.quality     = QUAL_360P;
     app.show_overlay = false;
     if (!f) return;
     char line[128];
     while (fgets(line, sizeof(line), f)) {
         line[strcspn(line, "\r\n")] = 0;
-        if      (strncmp(line, "channel:", 8) == 0) strncpy(app.channel, line+8, 47);
-        else if (strncmp(line, "quality:", 8) == 0) app.quality = (VideoQuality)atoi(line+8);
-        else if (strncmp(line, "overlay:", 8) == 0) app.show_overlay = atoi(line+8) != 0;
+        if      (strncmp(line,"channel:", 8) == 0) strncpy(app.channel, line+8, 47);
+        else if (strncmp(line,"quality:", 8) == 0) app.quality = (VideoQuality)atoi(line+8);
+        else if (strncmp(line,"overlay:", 8) == 0) app.show_overlay = atoi(line+8) != 0;
     }
     fclose(f);
 }
@@ -259,18 +265,24 @@ static void load_token(void) {
     FILE *f = fopen(TOKEN_FILE, "r");
     if (!f) {
         snprintf(app.oauth, sizeof(app.oauth), "PASS schmoopiie");
-        snprintf(app.nick, sizeof(app.nick), "justinfan%d", (int)(osGetTime()%90000+10000));
+        snprintf(app.nick,  sizeof(app.nick),  "justinfan%d",
+                 (int)(osGetTime()%90000+10000));
         app.logged_in = false;
         return;
     }
     char line[256];
     while (fgets(line, sizeof(line), f)) {
         line[strcspn(line, "\r\n")] = 0;
-        if      (strncmp(line, "oauth:", 6) == 0) snprintf(app.oauth, sizeof(app.oauth), "PASS %.*s", (int)(sizeof(app.oauth)-6), line);
-        else if (strncmp(line, "nick:",  5) == 0) { strncpy(app.nick, line+5, sizeof(app.nick)-1); app.nick[sizeof(app.nick)-1] = 0; }
+        if      (strncmp(line,"oauth:",6) == 0)
+            snprintf(app.oauth, sizeof(app.oauth), "PASS oauth:%.*s",
+                     (int)(sizeof(app.oauth)-12), line+6);
+        else if (strncmp(line,"nick:", 5) == 0) {
+            strncpy(app.nick, line+5, sizeof(app.nick)-1);
+            app.nick[sizeof(app.nick)-1] = 0;
+        }
     }
     fclose(f);
-    app.logged_in = (strncmp(app.nick, "justinfan", 9) != 0);
+    app.logged_in = (strncmp(app.nick,"justinfan",9) != 0);
 }
 
 static void save_token(const char *oauth_token, const char *nick) {
@@ -285,28 +297,29 @@ static void save_token(const char *oauth_token, const char *nick) {
 static void do_logout(void) {
     remove(TOKEN_FILE);
     snprintf(app.oauth, sizeof(app.oauth), "PASS schmoopiie");
-    snprintf(app.nick,  sizeof(app.nick),  "justinfan%d", (int)(osGetTime()%90000+10000));
+    snprintf(app.nick,  sizeof(app.nick),  "justinfan%d",
+             (int)(osGetTime()%90000+10000));
     app.logged_in = false;
     set_status("Logged out");
 }
 
 /* ═══════════════════════════════════════════════════════════
- *  CHAT / IRC
+ * CHAT / IRC
  * ═══════════════════════════════════════════════════════════ */
 
 static void chat_push(const char *nick, const char *text) {
     ChatLine *cl = &app.lines[app.line_head % MAX_LINES];
-    strncpy(cl->nick, nick, 31);       cl->nick[31] = 0;
+    strncpy(cl->nick, nick, 31); cl->nick[31] = 0;
     strncpy(cl->text, text, MAX_LINE_LEN-1); cl->text[MAX_LINE_LEN-1] = 0;
     app.line_head++;
     if (app.line_count < MAX_LINES) app.line_count++;
     if (!app.scroll_locked) app.scroll_offset = 0;
 }
 
-/* ── TLS globals for IRC ───────────────────────────────────── */
-static mbedtls_ssl_context      g_ssl;
-static mbedtls_ssl_config       g_conf;
-static mbedtls_entropy_context  g_entropy;
+/* ── TLS globals for IRC ─────────────────────────────────── */
+static mbedtls_ssl_context     g_ssl;
+static mbedtls_ssl_config      g_conf;
+static mbedtls_entropy_context g_entropy;
 static mbedtls_ctr_drbg_context g_ctr_drbg;
 static bool g_tls_ok = false;
 
@@ -316,7 +329,8 @@ static int tls_send(void *ctx, const unsigned char *buf, size_t len) {
 }
 static int tls_recv(void *ctx, unsigned char *buf, size_t len) {
     int r = recv(*(int*)ctx, (char*)buf, len, 0);
-    if (r < 0) return (errno==EAGAIN||errno==EWOULDBLOCK) ? MBEDTLS_ERR_SSL_WANT_READ : -1;
+    if (r < 0) return (errno==EAGAIN||errno==EWOULDBLOCK)
+               ? MBEDTLS_ERR_SSL_WANT_READ : -1;
     return r;
 }
 
@@ -326,25 +340,30 @@ static bool irc_connect(void) {
     hints.ai_socktype = SOCK_STREAM;
     char port[8];
     snprintf(port, sizeof(port), "%d", IRC_PORT);
-    if (getaddrinfo(IRC_HOST, port, &hints, &res) != 0) { LOG("IRC DNS failed"); set_status("DNS failed"); return false; }
+    if (getaddrinfo(IRC_HOST, port, &hints, &res) != 0) {
+        LOG("IRC DNS failed"); set_status("DNS failed"); return false;
+    }
     app.sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (app.sock < 0) { freeaddrinfo(res); LOG("IRC socket error"); set_status("Socket error"); return false; }
+    if (app.sock < 0) {
+        freeaddrinfo(res); LOG("IRC socket error"); set_status("Socket error"); return false;
+    }
     if (connect(app.sock, res->ai_addr, res->ai_addrlen) < 0) {
-        freeaddrinfo(res); close(app.sock); app.sock = -1; LOG("IRC connect failed errno=%d", errno); set_status("Connect failed"); return false;
+        freeaddrinfo(res); close(app.sock); app.sock = -1;
+        LOG("IRC connect failed errno=%d", errno); set_status("Connect failed"); return false;
     }
     freeaddrinfo(res);
 
-    /* TLS handshake (blocking — socket still blocking here) */
     if (g_tls_ok) {
         mbedtls_ssl_free(&g_ssl); mbedtls_ssl_config_free(&g_conf);
         mbedtls_entropy_free(&g_entropy); mbedtls_ctr_drbg_free(&g_ctr_drbg);
         g_tls_ok = false;
     }
-    mbedtls_ssl_init(&g_ssl); mbedtls_ssl_config_init(&g_conf);
+    mbedtls_ssl_init(&g_ssl);        mbedtls_ssl_config_init(&g_conf);
     mbedtls_entropy_init(&g_entropy); mbedtls_ctr_drbg_init(&g_ctr_drbg);
     mbedtls_ctr_drbg_seed(&g_ctr_drbg, mbedtls_entropy_func, &g_entropy, NULL, 0);
     mbedtls_ssl_config_defaults(&g_conf, MBEDTLS_SSL_IS_CLIENT,
-        MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT);
+                                MBEDTLS_SSL_TRANSPORT_STREAM,
+                                MBEDTLS_SSL_PRESET_DEFAULT);
     mbedtls_ssl_conf_authmode(&g_conf, MBEDTLS_SSL_VERIFY_NONE);
     mbedtls_ssl_conf_rng(&g_conf, mbedtls_ctr_drbg_random, &g_ctr_drbg);
     mbedtls_ssl_setup(&g_ssl, &g_conf);
@@ -364,7 +383,6 @@ static bool irc_connect(void) {
     fcntl(app.sock, F_SETFL, O_NONBLOCK);
 
     char msg[256];
-    /* Only send PASS for authenticated users — Twitch rejects anonymous PASS */
     if (app.logged_in) {
         snprintf(msg, sizeof(msg), "%s\r\n", app.oauth);
         mbedtls_ssl_write(&g_ssl, (const unsigned char*)msg, strlen(msg));
@@ -380,6 +398,10 @@ static bool irc_connect(void) {
     return true;
 }
 
+/*
+ * irc_disconnect: tears down IRC only.
+ * Does NOT touch video — video runs independently.
+ */
 static void irc_disconnect(void) {
     if (g_tls_ok) {
         mbedtls_ssl_close_notify(&g_ssl);
@@ -388,14 +410,13 @@ static void irc_disconnect(void) {
         g_tls_ok = false;
     }
     if (app.sock >= 0) { close(app.sock); app.sock = -1; }
-    video_stop();
     app.irc_connected = false;
     app.irc_buf_len   = 0;
 }
 
 static void irc_send_msg(const char *text) {
     if (!app.irc_connected || !g_tls_ok) return;
-    if (!app.logged_in) { chat_push("System", "Login to send messages"); return; }
+    if (!app.logged_in) { chat_push("System","Login to send messages"); return; }
     char msg[256];
     snprintf(msg, sizeof(msg), "PRIVMSG %s :%s\r\n", app.channel, text);
     mbedtls_ssl_write(&g_ssl, (const unsigned char*)msg, strlen(msg));
@@ -407,7 +428,7 @@ static void irc_poll(void) {
     char tmp[512];
     int n = mbedtls_ssl_read(&g_ssl, (unsigned char*)tmp, sizeof(tmp)-1);
     if (n == MBEDTLS_ERR_SSL_WANT_READ || n == 0) return;
-    if (n < 0) { LOG("IRC poll read err %d, disconnecting", n); irc_disconnect(); return; }
+    if (n < 0) { LOG("IRC poll read err %d, reconnecting", n); irc_disconnect(); return; }
     tmp[n] = 0;
     LOG("IRC rx: %.120s", tmp);
     int copy = n;
@@ -423,7 +444,7 @@ static void irc_poll(void) {
             snprintf(pong, sizeof(pong), "PONG %s\r\n", start+5);
             mbedtls_ssl_write(&g_ssl, (const unsigned char*)pong, strlen(pong));
         } else if (strstr(start, "PRIVMSG")) {
-            char *ne = strchr(start+1, '!'), *ms = strstr(start, " :");
+            char *ne = strchr(start+1,'!'), *ms = strstr(start," :");
             if (ne && ms) {
                 char nn[32] = {0};
                 int nl = (int)(ne-(start+1)); if (nl > 31) nl = 31;
@@ -440,7 +461,7 @@ static void irc_poll(void) {
 }
 
 /* ═══════════════════════════════════════════════════════════
- *  SOFTWARE KEYBOARD HELPER
+ * SOFTWARE KEYBOARD HELPER
  * ═══════════════════════════════════════════════════════════ */
 
 static bool swkbd_get(char *out, size_t len, const char *hint, bool password) {
@@ -459,44 +480,66 @@ static bool swkbd_get(char *out, size_t len, const char *hint, bool password) {
 }
 
 /* ═══════════════════════════════════════════════════════════
- *  CHANNEL / SESSION HELPERS
+ * CHANNEL / SESSION HELPERS
  * ═══════════════════════════════════════════════════════════ */
 
 static void join_channel(const char *chan) {
+    /* Stop old video before starting a new channel */
+    video_stop();
+    app.vid_ever_started = false;
+
     irc_disconnect();
     app.line_head = 0; app.line_count = 0;
     app.scroll_offset = 0; app.scroll_locked = false;
     memset(app.lines, 0, sizeof(app.lines));
+
     strncpy(app.channel, chan, 47); app.channel[47] = 0;
     if (app.channel[0] != '#') {
         char tmp[48]; snprintf(tmp, sizeof(tmp), "#%s", app.channel);
         strncpy(app.channel, tmp, 47);
     }
+
     history_push(app.channel);
     save_settings();
     chat_push("System", "Welcome to Twitch3DS!");
     app.thumb_loaded = false;
-    strcpy(app.stream_game,  "Twitch");
+    strcpy(app.stream_game, "Twitch");
     app.viewer_count = 0;
+
     if (irc_connect()) {
         app.state = STATE_WATCHING;
         const char *ch = app.channel[0]=='#' ? app.channel+1 : app.channel;
         video_start(ch, app.oauth, CLIENT_ID);
+        app.vid_ever_started = true;
     } else {
         app.state = STATE_ERROR;
     }
     app.tab = TAB_CHAT;
 }
 
-
 /* ═══════════════════════════════════════════════════════════
- *  DEVICE CODE FLOW (DCF)
+ * DEVICE CODE FLOW (DCF)
  * ═══════════════════════════════════════════════════════════ */
 
-/* ── Tiny inline JSON value extractor ───────────────────── */
+typedef struct { char *data; size_t len; size_t cap; } CurlBuf;
+
+static size_t curl_write_cb(void *ptr, size_t size, size_t nmemb, void *userdata) {
+    CurlBuf *buf = (CurlBuf *)userdata;
+    size_t incoming = size * nmemb;
+    if (buf->len + incoming + 1 > buf->cap) {
+        size_t new_cap = buf->cap + incoming + 512;
+        char *tmp = realloc(buf->data, new_cap);
+        if (!tmp) return 0;
+        buf->data = tmp; buf->cap = new_cap;
+    }
+    memcpy(buf->data + buf->len, ptr, incoming);
+    buf->len += incoming;
+    buf->data[buf->len] = '\0';
+    return incoming;
+}
+
 static bool json_get_string(const char *json, const char *key,
-                             char *out, size_t out_len)
-{
+                             char *out, size_t out_len) {
     char needle[64];
     snprintf(needle, sizeof(needle), "\"%s\"", key);
     const char *p = strstr(json, needle);
@@ -520,25 +563,6 @@ static bool json_get_string(const char *json, const char *key,
     return true;
 }
 
-/* ── libcurl write callback ─────────────────────────────── */
-typedef struct { char *data; size_t len; size_t cap; } CurlBuf;
-
-static size_t curl_write_cb(void *ptr, size_t size, size_t nmemb, void *userdata) {
-    CurlBuf *buf = (CurlBuf *)userdata;
-    size_t incoming = size * nmemb;
-    if (buf->len + incoming + 1 > buf->cap) {
-        size_t new_cap = buf->cap + incoming + 512;
-        char *tmp = realloc(buf->data, new_cap);
-        if (!tmp) return 0;
-        buf->data = tmp; buf->cap = new_cap;
-    }
-    memcpy(buf->data + buf->len, ptr, incoming);
-    buf->len += incoming;
-    buf->data[buf->len] = '\0';
-    return incoming;
-}
-
-/* ── Generic HTTPS POST ─────────────────────────────────── */
 static char *http_post(const char *url, const char *post_body) {
     CURL *curl = curl_easy_init();
     if (!curl) return NULL;
@@ -546,9 +570,9 @@ static char *http_post(const char *url, const char *post_body) {
     buf.data = malloc(512); if (!buf.data) { curl_easy_cleanup(curl); return NULL; }
     buf.cap = 512; buf.data[0] = '\0';
     curl_easy_setopt(curl, CURLOPT_URL,           url);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS,     post_body);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  curl_write_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &buf);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS,    post_body);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA,     &buf);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT,        10L);
@@ -558,21 +582,18 @@ static char *http_post(const char *url, const char *post_body) {
     return buf.data;
 }
 
-/* ── Step 1: start the device code flow ─────────────────── */
 static void do_device_login_start(void) {
     set_status("Contacting Twitch...");
     app.state = STATE_LOGIN_DEVICE;
 
     char post[256];
-    snprintf(post, sizeof(post),
-             "client_id=%s&scopes=%s", CLIENT_ID, DCF_SCOPES);
+    snprintf(post, sizeof(post), "client_id=%s&scopes=%s", CLIENT_ID, DCF_SCOPES);
 
     char *resp = http_post(DCF_DEVICE_URL, post);
     if (!resp) {
         set_status("DCF: network error");
-        chat_push("System", "Device login failed - check WiFi.");
-        app.state = STATE_ERROR;
-        return;
+        chat_push("System","Device login failed - check WiFi.");
+        app.state = STATE_ERROR; return;
     }
 
     char device_code[DCF_DEVICE_CODE_LEN] = {0};
@@ -582,53 +603,46 @@ static void do_device_login_start(void) {
     char interval_str[16]= {0};
 
     bool ok =
-        json_get_string(resp, "device_code",     device_code, sizeof(device_code)) &&
-        json_get_string(resp, "user_code",        user_code,   sizeof(user_code))   &&
-        json_get_string(resp, "verification_uri", verify_uri,  sizeof(verify_uri));
-
-    json_get_string(resp, "expires_in", expires_str,  sizeof(expires_str));
-    json_get_string(resp, "interval",   interval_str, sizeof(interval_str));
+        json_get_string(resp,"device_code",    device_code, sizeof(device_code)) &&
+        json_get_string(resp,"user_code",      user_code,   sizeof(user_code))   &&
+        json_get_string(resp,"verification_uri",verify_uri, sizeof(verify_uri));
+    json_get_string(resp,"expires_in",  expires_str,  sizeof(expires_str));
+    json_get_string(resp,"interval",    interval_str, sizeof(interval_str));
     free(resp);
 
     if (!ok) {
         set_status("DCF: bad response from Twitch");
-        chat_push("System", "Device login failed - unexpected response.");
-        app.state = STATE_ERROR;
-        return;
+        chat_push("System","Device login failed - unexpected response.");
+        app.state = STATE_ERROR; return;
     }
 
     strncpy(app.dcf.device_code, device_code, DCF_DEVICE_CODE_LEN-1);
-    strncpy(app.user_code,       user_code,   sizeof(app.user_code)-1);
-    strncpy(app.verify_url,      verify_uri,  sizeof(app.verify_url)-1);
+    strncpy(app.user_code, user_code,  sizeof(app.user_code)-1);
+    strncpy(app.verify_url, verify_uri, sizeof(app.verify_url)-1);
 
     int interval = interval_str[0] ? atoi(interval_str) : 5;
     if (interval < 1 || interval > DCF_MAX_INTERVAL) interval = 5;
-    app.dcf.interval       = interval;
-    app.dcf.expires_in     = expires_str[0] ? atoi(expires_str) : 1800;
-    app.dcf.polling        = true;
+    app.dcf.interval   = interval;
+    app.dcf.expires_in = expires_str[0] ? atoi(expires_str) : 1800;
+    app.dcf.polling    = true;
     app.dcf.last_poll_tick = osGetTime();
     app.dcf.start_tick     = osGetTime();
 
     set_status("Waiting for authorization...");
-    chat_push("System", "Open the URL on your phone/PC and enter:");
+    chat_push("System","Open the URL on your phone/PC and enter:");
     chat_push("System", app.user_code);
 }
 
-/* ── Step 2: poll for the token each frame ───────────────── */
 static void dcf_poll_tick(void) {
     if (!app.dcf.polling) return;
     u64 now = osGetTime();
 
-    /* Check expiry */
     if ((int)((now - app.dcf.start_tick) / 1000) >= app.dcf.expires_in) {
         app.dcf.polling = false;
         set_status("DCF: code expired - try again");
-        chat_push("System", "Login code expired. Tap Device Code to retry.");
-        app.state = STATE_ERROR;
-        return;
+        chat_push("System","Login code expired. Tap Device Code to retry.");
+        app.state = STATE_ERROR; return;
     }
-
-    /* Throttle by interval */
     if ((int)((now - app.dcf.last_poll_tick) / 1000) < app.dcf.interval) return;
     app.dcf.last_poll_tick = now;
 
@@ -643,66 +657,56 @@ static void dcf_poll_tick(void) {
     char *resp = http_post(DCF_TOKEN_URL, post);
     if (!resp) { set_status("DCF: poll failed, retrying..."); return; }
 
-    if (strstr(resp, "authorization_pending")) {
-        free(resp);
-        set_status("Waiting... open URL on your phone.");
-        return;
+    if (strstr(resp,"authorization_pending")) {
+        free(resp); set_status("Waiting... open URL on your phone."); return;
     }
-    if (strstr(resp, "slow_down")) {
-        free(resp);
-        app.dcf.interval += 5;
-        return;
+    if (strstr(resp,"slow_down")) {
+        free(resp); app.dcf.interval += 5; return;
     }
-    if (strstr(resp, "\"message\"") || strstr(resp, "\"error\"")) {
+    if (strstr(resp,"\"message\"") || strstr(resp,"\"error\"")) {
         char msg[128] = {0};
-        if (!json_get_string(resp, "message", msg, sizeof(msg)))
-            json_get_string(resp, "error", msg, sizeof(msg));
+        if (!json_get_string(resp,"message",msg,sizeof(msg)))
+            json_get_string(resp,"error",msg,sizeof(msg));
         free(resp);
         app.dcf.polling = false;
         set_status("DCF error: %.60s", msg);
-        chat_push("System", "Login failed - try again.");
-        app.state = STATE_ERROR;
-        return;
+        chat_push("System","Login failed - try again.");
+        app.state = STATE_ERROR; return;
     }
 
-    /* Success — parse access_token */
     char access_token[DCF_TOKEN_LEN] = {0};
-    bool got = json_get_string(resp, "access_token", access_token, sizeof(access_token));
+    bool got = json_get_string(resp,"access_token",access_token,sizeof(access_token));
     free(resp);
 
     if (!got || access_token[0] == '\0') {
         app.dcf.polling = false;
         set_status("DCF: no token in response");
-        chat_push("System", "Login failed - unexpected response.");
-        app.state = STATE_ERROR;
-        return;
+        chat_push("System","Login failed - unexpected response.");
+        app.state = STATE_ERROR; return;
     }
 
-    /* Fetch username from Helix */
     char nick[32] = {0};
-    {
-        CURL *curl = curl_easy_init();
-        if (curl) {
-            CurlBuf ubuf = { NULL, 0, 0 };
-            ubuf.data = malloc(512); ubuf.cap = 512; ubuf.data[0] = '\0';
-            char auth_hdr[DCF_TOKEN_LEN+32], cid_hdr[64];
-            snprintf(auth_hdr, sizeof(auth_hdr), "Authorization: Bearer %s", access_token);
-            snprintf(cid_hdr,  sizeof(cid_hdr),  "Client-Id: %s", CLIENT_ID);
-            struct curl_slist *hdrs = NULL;
-            hdrs = curl_slist_append(hdrs, auth_hdr);
-            hdrs = curl_slist_append(hdrs, cid_hdr);
-            curl_easy_setopt(curl, CURLOPT_URL,           "https://api.twitch.tv/helix/users");
-            curl_easy_setopt(curl, CURLOPT_HTTPHEADER,    hdrs);
-            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
-            curl_easy_setopt(curl, CURLOPT_WRITEDATA,     &ubuf);
-            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER,1L);
-            curl_easy_setopt(curl, CURLOPT_TIMEOUT,       10L);
-            if (curl_easy_perform(curl) == CURLE_OK)
-                json_get_string(ubuf.data, "login", nick, sizeof(nick));
-            curl_slist_free_all(hdrs);
-            curl_easy_cleanup(curl);
-            free(ubuf.data);
-        }
+    CURL *curl = curl_easy_init();
+    if (curl) {
+        CurlBuf ubuf = { NULL, 0, 0 };
+        ubuf.data = malloc(512); ubuf.cap = 512; ubuf.data[0] = '\0';
+        char auth_hdr[DCF_TOKEN_LEN+32], cid_hdr[64];
+        snprintf(auth_hdr, sizeof(auth_hdr), "Authorization: Bearer %s", access_token);
+        snprintf(cid_hdr,  sizeof(cid_hdr),  "Client-Id: %s", CLIENT_ID);
+        struct curl_slist *hdrs = NULL;
+        hdrs = curl_slist_append(hdrs, auth_hdr);
+        hdrs = curl_slist_append(hdrs, cid_hdr);
+        curl_easy_setopt(curl, CURLOPT_URL,           "https://api.twitch.tv/helix/users");
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER,    hdrs);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA,     &ubuf);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT,        10L);
+        if (curl_easy_perform(curl) == CURLE_OK)
+            json_get_string(ubuf.data,"login",nick,sizeof(nick));
+        curl_slist_free_all(hdrs);
+        curl_easy_cleanup(curl);
+        free(ubuf.data);
     }
     if (nick[0] == '\0')
         snprintf(nick, sizeof(nick), "twitchuser%u", (unsigned)(osGetTime()%9999));
@@ -711,23 +715,19 @@ static void dcf_poll_tick(void) {
     save_token(access_token, nick);
     load_token();
     set_status("Logged in as %s!", app.nick);
-    chat_push("System", "Device login successful!");
+    chat_push("System","Device login successful!");
     chat_push("System", app.nick);
     irc_disconnect();
     if (irc_connect()) app.state = STATE_WATCHING;
-    else               app.state = STATE_ERROR;
+    else app.state = STATE_ERROR;
 }
 
 /* ═══════════════════════════════════════════════════════════
- *  DRAW — TOP SCREEN
- * ═══════════════════════════════════════════════════════════ */
-
-/* ═══════════════════════════════════════════════════════════
- *  LIVE THUMBNAIL
+ * LIVE THUMBNAIL
  * ═══════════════════════════════════════════════════════════ */
 
 static void fetch_thumbnail(void) {
-    const char *ch = (app.channel[0] == '#') ? app.channel + 1 : app.channel;
+    const char *ch = (app.channel[0] == '#') ? app.channel+1 : app.channel;
     char url[256];
     snprintf(url, sizeof(url),
         "https://static-cdn.jtvnw.net/previews-ttv/live_user_%s-%dx%d.jpg",
@@ -736,7 +736,7 @@ static void fetch_thumbnail(void) {
     CURL *curl = curl_easy_init();
     if (!curl) return;
     CurlBuf buf = { NULL, 0, 0 };
-    buf.data = malloc(128 * 1024); buf.cap = 128 * 1024;
+    buf.data = malloc(128*1024); buf.cap = 128*1024;
     if (!buf.data) { curl_easy_cleanup(curl); return; }
     buf.data[0] = '\0';
     curl_easy_setopt(curl, CURLOPT_URL,           url);
@@ -754,28 +754,31 @@ static void fetch_thumbnail(void) {
     free(buf.data);
     if (!pixels) return;
 
-    /* Copy into a linear-memory staging buffer, then GPU-transfer to tiled tex */
     u8 *linear = linearAlloc(THUMB_TEX_W * THUMB_TEX_H * 4);
     if (!linear) { stbi_image_free(pixels); return; }
     memset(linear, 0, THUMB_TEX_W * THUMB_TEX_H * 4);
-    int cw = w < THUMB_TEX_W ? w : THUMB_TEX_W;
+    int cw  = w < THUMB_TEX_W ? w : THUMB_TEX_W;
     int ch2 = h < THUMB_TEX_H ? h : THUMB_TEX_H;
     for (int y = 0; y < ch2; y++)
-        memcpy(linear + y * THUMB_TEX_W * 4, pixels + y * w * 4, cw * 4);
+        memcpy(linear + y*THUMB_TEX_W*4, pixels + y*w*4, cw*4);
     stbi_image_free(pixels);
 
     GSPGPU_FlushDataCache(linear, THUMB_TEX_W * THUMB_TEX_H * 4);
     C3D_SyncDisplayTransfer(
-        (u32*)linear,          GX_BUFFER_DIM(THUMB_TEX_W, THUMB_TEX_H),
-        (u32*)app.thumb_tex.data, GX_BUFFER_DIM(THUMB_TEX_W, THUMB_TEX_H),
-        GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |
+        (u32*)linear,            GX_BUFFER_DIM(THUMB_TEX_W, THUMB_TEX_H),
+        (u32*)app.thumb_tex.data,GX_BUFFER_DIM(THUMB_TEX_W, THUMB_TEX_H),
+        GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8)  |
         GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
         GX_TRANSFER_FLIP_VERT(1) |
         GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
     linearFree(linear);
-    app.thumb_loaded = true;
-    app.thumb_last_tick = osGetTime();
+    app.thumb_loaded     = true;
+    app.thumb_last_tick  = osGetTime();
 }
+
+/* ═══════════════════════════════════════════════════════════
+ * DRAW — TOP SCREEN
+ * ═══════════════════════════════════════════════════════════ */
 
 static void draw_top(void) {
     C2D_TargetClear(app.top, COL_BG_TOP);
@@ -786,7 +789,6 @@ static void draw_top(void) {
     if (app.state == STATE_LOGIN_DEVICE) {
         draw_text(10, 14, 0.52f, COL_PURPLE_LT, "Device Login");
 
-        /* User code box */
         draw_rect(10, 38, TOP_W-20, 44, COL_CODE_BG);
         draw_text(TOP_W/2-60, 50, 0.72f, COL_WHITE, app.user_code);
 
@@ -795,7 +797,6 @@ static void draw_top(void) {
         draw_text(10, 142, 0.36f, COL_YELLOW, "2. Enter the code shown above.");
         draw_text(10, 158, 0.36f, COL_GRAY,   "3. This screen updates automatically.");
 
-        /* Expiry progress bar */
         if (app.dcf.polling) {
             int elapsed = (int)((osGetTime() - app.dcf.start_tick) / 1000);
             int total   = app.dcf.expires_in > 0 ? app.dcf.expires_in : 1800;
@@ -811,18 +812,25 @@ static void draw_top(void) {
         }
 
     } else if (app.state == STATE_ERROR) {
-        draw_text( 80, 100, 0.50f, COL_RED,  "Connection Error");
-        draw_text(  4, 122, 0.36f, COL_YELLOW, app.status_msg[0] ? app.status_msg : "Open Channels tab to retry");
-        draw_text(  4, 142, 0.34f, COL_GRAY, "Open Channels tab and try again");
+        draw_text( 80, 100, 0.50f, COL_RED,    "Connection Error");
+        draw_text(  4, 122, 0.36f, COL_YELLOW,
+                  app.status_msg[0] ? app.status_msg : "Open Channels tab to retry");
+        draw_text(  4, 142, 0.34f, COL_GRAY,   "Open Channels tab and try again");
 
     } else {
         if (video_is_offline()) {
             draw_text(60,  98, 0.55f, COL_RED,  "Channel is Offline");
             draw_text(60, 122, 0.40f, COL_GRAY, "No live stream right now");
-        } else if (video_is_active()) {
+        } else if (app.vid_ever_started) {
+            /*
+             * Draw video whenever we've ever started it for this channel.
+             * video_draw_top keeps displaying the last decoded frame
+             * even after the polling thread sleeps between segments.
+             */
             video_draw_top(0, 0);
         } else if (app.thumb_loaded) {
-            C2D_DrawImageAt(app.thumb_img, 0, (TOP_H - THUMB_H) / 2.0f, 0.5f, NULL, 1.0f, 1.0f);
+            C2D_DrawImageAt(app.thumb_img, 0, (TOP_H - THUMB_H) / 2.0f,
+                            0.5f, NULL, 1.0f, 1.0f);
         } else {
             draw_text(120, 108, 0.55f, COL_GRAY, "[ LIVE VIDEO ]");
             draw_text( 60, 126, 0.40f, COL_GRAY, "Connecting...");
@@ -830,29 +838,33 @@ static void draw_top(void) {
     }
 
     /* Overlay */
-    if (app.show_overlay && (app.state == STATE_WATCHING || app.state == STATE_ERROR)) {
+    if (app.show_overlay &&
+        (app.state == STATE_WATCHING || app.state == STATE_ERROR)) {
         draw_rect(0, TOP_H-48, TOP_W, 48, COL_OVERLAY);
         draw_rect(0, TOP_H-48, TOP_W,  1, COL_DIVIDER);
         char info1[96], info2[128], vc[32];
         snprintf(info1, sizeof(info1), "%s | %s",
-                 app.channel[0]     ? app.channel     : "No channel",
+                 app.channel[0] ? app.channel : "No channel",
                  app.stream_game[0] ? app.stream_game : "Twitch");
         snprintf(info2, sizeof(info2), "%s",
                  app.stream_title[0] ? app.stream_title : "No stream info");
-        snprintf(vc,    sizeof(vc),    "Viewers: %d", app.viewer_count);
-        draw_text(8,        TOP_H-46, 0.42f, COL_YELLOW, info1);
-        draw_text(8,        TOP_H-30, 0.38f, COL_WHITE,  info2);
-        draw_text(TOP_W-110,TOP_H-46, 0.36f, COL_CYAN,   vc);
-        C2D_DrawCircleSolid(TOP_W-18, TOP_H-14, 0, 6, app.irc_connected ? COL_RED : COL_GRAY);
+        snprintf(vc, sizeof(vc), "Viewers: %d", app.viewer_count);
+        draw_text(8,         TOP_H-46, 0.42f, COL_YELLOW, info1);
+        draw_text(8,         TOP_H-30, 0.38f, COL_WHITE,  info2);
+        draw_text(TOP_W-110, TOP_H-46, 0.36f, COL_CYAN,   vc);
+        C2D_DrawCircleSolid(TOP_W-18, TOP_H-14, 0, 6,
+            app.irc_connected ? COL_RED : COL_GRAY);
         draw_text(4, TOP_H-14, 0.34f, COL_GRAY, "SELECT: hide");
     } else {
-        C2D_DrawCircleSolid(TOP_W-14, 10, 0, 5, app.irc_connected ? COL_RED : COL_GRAY);
-        if (app.irc_connected) draw_text(TOP_W-90, 3, 0.30f, COL_GRAY, "SELECT: info");
+        C2D_DrawCircleSolid(TOP_W-14, 10, 0, 5,
+            app.irc_connected ? COL_RED : COL_GRAY);
+        if (app.irc_connected)
+            draw_text(TOP_W-90, 3, 0.30f, COL_GRAY, "SELECT: info");
     }
 }
 
 /* ═══════════════════════════════════════════════════════════
- *  DRAW — BOTTOM SCREEN
+ * DRAW — BOTTOM SCREEN
  * ═══════════════════════════════════════════════════════════ */
 
 static void draw_tab_bar(void) {
@@ -868,7 +880,7 @@ static void draw_tab_bar(void) {
 
 static void draw_chat_tab(void) {
     draw_rect(0, CHAT_TOP, BOT_W, CHAT_BOT-CHAT_TOP, COL_CHAT_BG);
-    int vis = VISIBLE_LINES; if (vis > MAX_LINES) vis = MAX_LINES;
+    int vis   = VISIBLE_LINES; if (vis > MAX_LINES) vis = MAX_LINES;
     int total = app.line_count;
     int max_off = (total > vis) ? (total-vis) : 0;
     if (app.scroll_offset > max_off) app.scroll_offset = max_off;
@@ -877,36 +889,40 @@ static void draw_chat_tab(void) {
     int draw_count = total - draw_start;
     if (draw_count > vis) draw_count = vis;
     for (int i = 0; i < draw_count; i++) {
-        int idx = (app.line_head - app.line_count + draw_start + i + MAX_LINES * 2) % MAX_LINES;
+        int idx = (app.line_head - app.line_count + draw_start + i + MAX_LINES*2) % MAX_LINES;
         float y = CHAT_TOP + 2 + i*LINE_H;
         ChatLine *cl = &app.lines[idx];
         u32 nc = COL_PURPLE_LT;
-        if (strcmp(cl->nick, "System") == 0) nc = COL_GREEN;
-        else if (strcmp(cl->nick, app.nick) == 0) nc = COL_YELLOW;
+        if      (strcmp(cl->nick,"System")   == 0) nc = COL_GREEN;
+        else if (strcmp(cl->nick, app.nick)  == 0) nc = COL_YELLOW;
         char nd[36]; snprintf(nd, sizeof(nd), "%s:", cl->nick);
-        draw_text(CHAT_LEFT,    y,    0.34f, nc,        nd);
-        draw_text(CHAT_LEFT,    y+11, 0.34f, COL_WHITE, cl->text);
+        draw_text(CHAT_LEFT, y,    0.34f, nc,        nd);
+        draw_text(CHAT_LEFT, y+11, 0.34f, COL_WHITE, cl->text);
     }
+
     if (app.line_count > vis) {
         draw_rect(BOT_W-6, CHAT_TOP, 5, CHAT_BOT-CHAT_TOP, COL_GRAY_DK);
         int track_h = CHAT_BOT - CHAT_TOP;
         int thumb_h = (vis * track_h) / app.line_count; if (thumb_h < 8) thumb_h = 8;
         int max_off2 = app.line_count - vis; if (max_off2 < 1) max_off2 = 1;
-        int thumb_y = CHAT_TOP + ((max_off2 - app.scroll_offset) * (track_h - thumb_h)) / max_off2;
+        int thumb_y  = CHAT_TOP + ((max_off2 - app.scroll_offset) * (track_h-thumb_h)) / max_off2;
         draw_rect(BOT_W-6, thumb_y, 5, thumb_h, COL_PURPLE);
     }
     if (app.scroll_locked) {
         draw_rect(BOT_W-70, CHAT_TOP+2, 62, 14, COL_PURPLE_DK);
         draw_text(BOT_W-68, CHAT_TOP+3, 0.32f, COL_YELLOW, "PAUSED");
     }
-    draw_rect(0, CHAT_BOT,    BOT_W, 1,           COL_DIVIDER);
+
+    draw_rect(0, CHAT_BOT, BOT_W, 1, COL_DIVIDER);
     draw_rect(0, INPUT_BAR_Y, BOT_W, INPUT_BAR_H, COL_INPUT_BG);
     draw_rect(BOT_W-46, INPUT_BAR_Y+2, 44, INPUT_BAR_H-4, COL_BTN);
     draw_text(BOT_W-40, INPUT_BAR_Y+6, 0.38f, COL_WHITE, "SEND");
     char disp[140];
     snprintf(disp, sizeof(disp), app.input[0] ? "> %s_" :
-             (app.status_msg[0] ? app.status_msg : "> Tap SEND or press A..."), app.input);
-    draw_text(4, INPUT_BAR_Y+6, 0.38f, app.input[0] ? COL_WHITE : COL_GRAY, disp);
+             (app.status_msg[0] ? app.status_msg : "> Tap SEND or press A..."),
+             app.input);
+    draw_text(4, INPUT_BAR_Y+6, 0.38f,
+              app.input[0] ? COL_WHITE : COL_GRAY, disp);
 }
 
 static void draw_channels_tab(void) {
@@ -931,7 +947,8 @@ static void draw_channels_tab(void) {
     draw_text(8, CHAT_BOT-16, 0.34f, COL_WHITE, "Clear History");
     draw_rect(0, INPUT_BAR_Y, BOT_W, INPUT_BAR_H, COL_INPUT_BG);
     char cur[64];
-    snprintf(cur, sizeof(cur), "Now: %s | A=Join X=Search", app.channel[0] ? app.channel : "none");
+    snprintf(cur, sizeof(cur), "Now: %s | A=Join X=Search",
+             app.channel[0] ? app.channel : "none");
     draw_text(4, INPUT_BAR_Y+6, 0.36f, COL_GRAY, cur);
 }
 
@@ -952,8 +969,10 @@ static void draw_settings_tab(void) {
     draw_rect(0, y, BOT_W, 1, COL_DIVIDER); y += 6;
     draw_text(4, y, 0.40f, COL_YELLOW, "DISPLAY"); y += 14;
     draw_text(4, y, 0.36f, COL_WHITE, "Stream Info Overlay:");
-    draw_rect(BOT_W-54, y-2, 50, 16, app.show_overlay ? COL_TOGGLE_ON : COL_TOGGLE_OFF);
-    draw_text(BOT_W-50, y+1, 0.36f, COL_WHITE, app.show_overlay ? " ON" : " OFF");
+    draw_rect(BOT_W-54, y-2, 50, 16,
+              app.show_overlay ? COL_TOGGLE_ON : COL_TOGGLE_OFF);
+    draw_text(BOT_W-50, y+1, 0.36f, COL_WHITE,
+              app.show_overlay ? " ON" : " OFF");
     y += 18;
     draw_text(4, y, 0.36f, COL_WHITE, "Video Quality:"); y += 14;
     for (int i = 0; i < 3; i++) {
@@ -979,7 +998,7 @@ static void draw_bot(void) {
 }
 
 /* ═══════════════════════════════════════════════════════════
- *  INPUT HANDLING
+ * INPUT HANDLING
  * ═══════════════════════════════════════════════════════════ */
 
 static void handle_touch(touchPosition *t) {
@@ -991,12 +1010,18 @@ static void handle_touch(touchPosition *t) {
             if (touch_in(t, BOT_W-46, INPUT_BAR_Y+2, 44, INPUT_BAR_H-4)) {
                 memset(app.input, 0, sizeof(app.input));
                 if (swkbd_get(app.input, sizeof(app.input), "Send a message", false))
-                    if (app.input[0]) { irc_send_msg(app.input); memset(app.input, 0, sizeof(app.input)); }
+                    if (app.input[0]) {
+                        irc_send_msg(app.input);
+                        memset(app.input, 0, sizeof(app.input));
+                    }
             }
             if (t->py >= CHAT_TOP && t->py < CHAT_BOT) {
                 int mid = (CHAT_TOP + CHAT_BOT) / 2;
                 if (t->py < mid) { app.scroll_offset++; app.scroll_locked = true; }
-                else if (app.scroll_offset > 0) { app.scroll_offset--; if (app.scroll_offset == 0) app.scroll_locked = false; }
+                else if (app.scroll_offset > 0) {
+                    app.scroll_offset--;
+                    if (app.scroll_offset == 0) app.scroll_locked = false;
+                }
             }
             break;
         case TAB_CHANNELS: {
@@ -1008,7 +1033,9 @@ static void handle_touch(touchPosition *t) {
             }
             y += 26;
             for (int i = 0; i < app.history_count; i++) {
-                if (touch_in(t, 4, (int)y, BOT_W-8, 18)) { join_channel(app.history[i]); return; }
+                if (touch_in(t, 4, (int)y, BOT_W-8, 18)) {
+                    join_channel(app.history[i]); return;
+                }
                 y += 20; if (y > CHAT_BOT-20) break;
             }
             if (touch_in(t, 4, CHAT_BOT-18, 90, 16)) {
@@ -1026,10 +1053,14 @@ static void handle_touch(touchPosition *t) {
                 if (touch_in(t, 4, (int)y, BOT_W-8, 16)) do_device_login_start();
             }
             y += 48;
-            if (touch_in(t, BOT_W-54, (int)y-2, 50, 16)) { app.show_overlay = !app.show_overlay; save_settings(); }
+            if (touch_in(t, BOT_W-54, (int)y-2, 50, 16)) {
+                app.show_overlay = !app.show_overlay; save_settings();
+            }
             y += 32;
             for (int i = 0; i < 3; i++)
-                if (touch_in(t, 4+i*56, (int)y, 52, 16)) { app.quality = (VideoQuality)i; save_settings(); }
+                if (touch_in(t, 4+i*56, (int)y, 52, 16)) {
+                    app.quality = (VideoQuality)i; save_settings();
+                }
             break;
         }
     }
@@ -1043,11 +1074,19 @@ static void handle_buttons(u32 kDown) {
     switch (app.tab) {
         case TAB_CHAT:
             if (kDown & KEY_DUP)   { app.scroll_offset++; app.scroll_locked = true; }
-            if (kDown & KEY_DDOWN) { if (app.scroll_offset > 0) { app.scroll_offset--; if (app.scroll_offset == 0) app.scroll_locked = false; } }
+            if (kDown & KEY_DDOWN) {
+                if (app.scroll_offset > 0) {
+                    app.scroll_offset--;
+                    if (app.scroll_offset == 0) app.scroll_locked = false;
+                }
+            }
             if (kDown & KEY_A) {
                 memset(app.input, 0, sizeof(app.input));
                 if (swkbd_get(app.input, sizeof(app.input), "Send a message", false))
-                    if (app.input[0]) { irc_send_msg(app.input); memset(app.input, 0, sizeof(app.input)); }
+                    if (app.input[0]) {
+                        irc_send_msg(app.input);
+                        memset(app.input, 0, sizeof(app.input));
+                    }
             }
             if (kDown & KEY_B) memset(app.input, 0, sizeof(app.input));
             break;
@@ -1067,7 +1106,7 @@ static void handle_buttons(u32 kDown) {
 }
 
 /* ═══════════════════════════════════════════════════════════
- *  MAIN
+ * MAIN
  * ═══════════════════════════════════════════════════════════ */
 
 int main(void) {
@@ -1087,43 +1126,50 @@ int main(void) {
     app.font = C2D_FontLoadSystem(CFG_REGION_USA);
     app.tbuf = C2D_TextBufNew(16384);
 
-    app.sock          = -1;
-    app.irc_connected = false;
-    app.tab           = TAB_CHAT;
-    app.state         = STATE_ERROR;
-    app.line_head     = 0;
-    app.line_count    = 0;
-    app.scroll_offset = 0;
-    app.scroll_locked = false;
-    app.history_sel   = 0;
+    app.sock              = -1;
+    app.irc_connected     = false;
+    app.tab               = TAB_CHAT;
+    app.state             = STATE_ERROR;
+    app.line_head         = 0;
+    app.line_count        = 0;
+    app.scroll_offset     = 0;
+    app.scroll_locked     = false;
+    app.history_sel       = 0;
+    app.vid_ever_started  = false;
     memset(app.lines,  0, sizeof(app.lines));
     memset(app.input,  0, sizeof(app.input));
-    app.thumb_loaded    = false;
-    app.thumb_last_tick = 0;
+    app.thumb_loaded     = false;
+    app.thumb_last_tick  = 0;
     C3D_TexInit(&app.thumb_tex, THUMB_TEX_W, THUMB_TEX_H, GPU_RGBA8);
     C3D_TexSetFilter(&app.thumb_tex, GPU_LINEAR, GPU_LINEAR);
     app.thumb_st  = (Tex3DS_SubTexture){ THUMB_W, THUMB_H,
-                      0.0f, (float)THUMB_H/THUMB_TEX_H,
-                      (float)THUMB_W/THUMB_TEX_W, 0.0f };
+        0.0f, (float)THUMB_H/THUMB_TEX_H,
+        (float)THUMB_W/THUMB_TEX_W, 0.0f };
     app.thumb_img = (C2D_Image){ &app.thumb_tex, &app.thumb_st };
 
-    memset(&app.dcf,   0, sizeof(app.dcf));
+    memset(&app.dcf, 0, sizeof(app.dcf));
     strcpy(app.stream_title, "No stream metadata yet");
     strcpy(app.stream_game,  "Twitch");
     app.viewer_count = 0;
 
     mkdir_config();
-    { FILE *f = fopen("/config/twitch3ds.log","w"); if(f) fclose(f); } /* clear log */
+    { FILE *f = fopen("/config/twitch3ds.log","w"); if(f) fclose(f); }
     LOG("=== twitch3ds start ===");
     load_token();
     load_settings();
     load_history();
 
-    chat_push("System", "Welcome to Twitch3DS!");
-    chat_push("System", "Device Code login now available.");
+    chat_push("System","Welcome to Twitch3DS!");
+    chat_push("System","Device Code login now available.");
 
-    if (irc_connect()) app.state = STATE_WATCHING;
-    else               app.state = STATE_ERROR;
+    if (irc_connect()) {
+        app.state = STATE_WATCHING;
+        const char *ch = app.channel[0]=='#' ? app.channel+1 : app.channel;
+        video_start(ch, app.oauth, CLIENT_ID);
+        app.vid_ever_started = true;
+    } else {
+        app.state = STATE_ERROR;
+    }
 
     while (aptMainLoop()) {
         hidScanInput();
@@ -1140,12 +1186,15 @@ int main(void) {
         if (is_touching && !was_touching) handle_touch(&touch);
         was_touching = is_touching;
 
-        /* DCF polling — fires HTTP only when interval has elapsed */
         if (app.dcf.polling) dcf_poll_tick();
 
-        if (app.state == STATE_WATCHING) {
-            irc_poll();
+        /* IRC reconnect — does NOT restart video */
+        if (app.state == STATE_WATCHING && !app.irc_connected) {
+            LOG("main: IRC not connected, reconnecting...");
+            if (irc_connect()) set_status("IRC reconnected");
         }
+
+        if (app.state == STATE_WATCHING) irc_poll();
 
         C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
         draw_top();
