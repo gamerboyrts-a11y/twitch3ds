@@ -394,7 +394,7 @@ static void nal_feed(const u8 *data, int len) {
     GSPGPU_FlushDataCache(V.nalbuf, len);
     Result r = mvdstdProcessVideoFrame(V.nalbuf, len, 0, NULL);
     if (MVD_CHECKNALUPROC_SUCCESS(r) && (r == MVD_STATUS_FRAMEREADY)) {
-        mvdstdRenderVideoFrame(NULL, true);
+        mvdstdRenderVideoFrame(&V.cfg, true);
         LightLock_Lock(&V.lock);
         V.has_frame = true;
         LightLock_Unlock(&V.lock);
@@ -549,18 +549,11 @@ static void vid_thread(void *arg) {
 
     mvdstdGenerateDefaultConfig(&V.cfg, in_w, in_h, OUT_W, OUT_H,
         NULL, NULL, NULL);
+    /* Set physical output address directly — GenerateDefaultConfig doesn't
+       correctly convert vaddr_outdata0; manually patch physaddr like vp3ds does */
+    V.cfg.physaddr_outdata0 = osConvertVirtToPhys(V.outbuf);
     MVDSTD_SetConfig(&V.cfg);
-
-    /* Route MVD output to V.outbuf via the entry list — passing vaddr_outdata0
-       to mvdstdGenerateDefaultConfig does not work; SetupOutputBuffers does. */
-    MVDSTD_OutputBuffersEntryList elist;
-    memset(&elist, 0, sizeof(elist));
-    elist.total_entries = 1;
-    elist.entries[0].outdata0 = V.outbuf;
-    elist.entries[0].outdata1 = NULL;
-    Result msr = mvdstdSetupOutputBuffers(&elist, TEX_W * TEX_H * 2);
-    LOG("vid: SetupOutputBuffers r=0x%lx outbuf=%p", msr, V.outbuf);
-    LOG("vid: MVD ready, streaming...");
+    LOG("vid: MVD ready, outbuf virt=%p phys=0x%lx", V.outbuf, V.cfg.physaddr_outdata0);
 
 
     int seg_count = 0;
