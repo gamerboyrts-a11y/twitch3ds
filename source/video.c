@@ -631,7 +631,8 @@ void video_start(const char *channel, const char *oauth_pass,
     V.hls_url[0] = 0; V.last_seg[0] = 0;
     V.has_frame = false; V.offline = false; V.active = true;
     /* Do NOT reset tex_valid here — keep showing last frame during restart */
-    V.thread = threadCreate(vid_thread, NULL, 128*1024, 0x25, -1, false);
+    /* Run on core 2 (New3DS second app core) so it never preempts the render loop on core 0 */
+    V.thread = threadCreate(vid_thread, NULL, 128*1024, 0x19, 2, false);
     LOG("video_start: ch=%s cid=%.12s... thread=%p",
         V.channel, V.client_id, (void*)V.thread);
 }
