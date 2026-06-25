@@ -649,35 +649,36 @@ void video_stop(void) {
 }
 
 
-void video_draw_top(float x, float y) {
+/* Call this BEFORE C3D_FrameBegin to upload any pending decoded frame to the texture. */
+void video_upload_frame(void) {
     LightLock_Lock(&V.lock);
     bool ready = V.has_frame;
     if (ready) V.has_frame = false;
     LightLock_Unlock(&V.lock);
 
-    if (ready && V.stgbuf) {
-        /* Invalidate CPU cache for outbuf — MVD writes via DMA, cache holds stale zeros */
-        GSPGPU_InvalidateDataCache(V.outbuf, OUT_W * OUT_H * 2);
-        for (int row = 0; row < OUT_H; row++)
-            memcpy(V.stgbuf + row*TEX_W*2,
-                   V.outbuf + row*OUT_W*2, OUT_W*2);
-        GSPGPU_FlushDataCache(V.stgbuf, TEX_W * TEX_H * 2);
-        C3D_SyncDisplayTransfer(
-            (u32*)V.stgbuf,   GX_BUFFER_DIM(TEX_W, TEX_H),
-            (u32*)V.tex.data, GX_BUFFER_DIM(TEX_W, TEX_H),
-            GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGB565)  |
-            GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB565) |
-            GX_TRANSFER_FLIP_VERT(1)                       |
-            GX_TRANSFER_OUT_TILED(1)                       |
-            GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
-        C3D_TexFlush(&V.tex);
-        V.tex_valid = true;
-    }
+    if (!ready || !V.stgbuf) return;
 
-    /* Only draw if we have at least one real frame transferred */
-    if (V.tex_valid) {
+    /* MVD writes via DMA — invalidate CPU cache before reading outbuf */
+    GSPGPU_InvalidateDataCache(V.outbuf, OUT_W * OUT_H * 2);
+    for (int row = 0; row < OUT_H; row++)
+        memcpy(V.stgbuf + row*TEX_W*2, V.outbuf + row*OUT_W*2, OUT_W*2);
+    GSPGPU_FlushDataCache(V.stgbuf, TEX_W * TEX_H * 2);
+    C3D_SyncDisplayTransfer(
+        (u32*)V.stgbuf,   GX_BUFFER_DIM(TEX_W, TEX_H),
+        (u32*)V.tex.data, GX_BUFFER_DIM(TEX_W, TEX_H),
+        GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGB565)  |
+        GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB565) |
+        GX_TRANSFER_FLIP_VERT(1)                       |
+        GX_TRANSFER_OUT_TILED(1)                       |
+        GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
+    C3D_TexFlush(&V.tex);
+    V.tex_valid = true;
+}
+
+/* Call this inside a C3D frame to draw the last uploaded texture. */
+void video_draw_top(float x, float y) {
+    if (V.tex_valid)
         C2D_DrawImageAt(V.img, x, y, 0.5f, NULL, 1.0f, 1.0f);
-    }
 }
 
 

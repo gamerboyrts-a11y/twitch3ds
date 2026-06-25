@@ -700,7 +700,7 @@ static void dcf_poll_tick(void) {
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER,    hdrs);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA,     &ubuf);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
         curl_easy_setopt(curl, CURLOPT_TIMEOUT,        10L);
         if (curl_easy_perform(curl) == CURLE_OK)
             json_get_string(ubuf.data,"login",nick,sizeof(nick));
@@ -1196,6 +1196,7 @@ int main(void) {
 
         if (app.state == STATE_WATCHING) irc_poll();
 
+        video_upload_frame();
         C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
         draw_top();
         draw_bot();
