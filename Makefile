@@ -1,47 +1,62 @@
-APP_TITLE  := Twitch3DS
-APP_AUTHOR := Twitch3DS Project
-APP_DESC   := Twitch Chat and Stream Viewer
-APP_VERSION := 0.1.0
-TARGET   := twitch3ds
-BUILD    := build
-SOURCES  := source
-DATA     := data
-INCLUDES := include
-ROMFS    := romfs
+#---------------------------------------------------------------------------------
+.SUFFIXES:
+#---------------------------------------------------------------------------------
 
-ifeq ($(strip $(DEVKITPRO)),)
-$(error "Please set DEVKITPRO in your environment.")
-endif
 ifeq ($(strip $(DEVKITARM)),)
-$(error "Please set DEVKITARM in your environment.")
+$(error "Please set DEVKITARM in your environment. export DEVKITARM=<path to>devkitARM")
 endif
 
+TOPDIR ?= $(CURDIR)
 include $(DEVKITARM)/3ds_rules
 
-ARCH := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
+#---------------------------------------------------------------------------------
+APP_TITLE   := Twitch3DS
+APP_DESC    := Twitch client for New 3DS
+APP_AUTHOR  := gamerboyrts
 
-CFLAGS   := -g -Wall -Wno-format-truncation -O2 -mword-relocations \
-            -fomit-frame-pointer -ffunction-sections $(ARCH) $(INCLUDE) -D__3DS__
+TARGET      := twitch3ds
+BUILD       := build
+SOURCES     := source
+DATA        := data
+INCLUDES    := include
+ROMFS       := romfs
+ICON        := $(TOPDIR)/icon.png
+
+#---------------------------------------------------------------------------------
+ARCH     := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
+
+CFLAGS   := -g -Wall -O2 -fomit-frame-pointer -ffunction-sections \
+             $(ARCH) $(INCLUDE) -D__3DS__ -DNEW3DS
+
+CFLAGS   += $(foreach dir,$(LIBDIRS),-I$(dir)/include)
+
 CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
+
 ASFLAGS  := -g $(ARCH)
-LDFLAGS   = -specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 
-# libctru must come AFTER curl+mbedtls so it resolves poll/inet_pton/bind etc.
-# mbedcrypto must come LAST in the tls stack (it has no deps on the others).
-LIBS := -lcitro2d -lcitro3d \
-        -lcurl \
-        -lmbedtls -lmbedx509 -lmbedcrypto \
-        -lctru \
-        -lz -lm
+LDFLAGS  = -specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 
-LIBDIRS := $(PORTLIBS) $(CTRULIB)
+#---------------------------------------------------------------------------------
+# -lz must come AFTER -lcurl
+#---------------------------------------------------------------------------------
+LIBS     := -lcitro2d -lcitro3d \
+            -lcurl -lmbedtls -lmbedx509 -lmbedcrypto \
+            -lz \
+            -lctru -lm
 
+#---------------------------------------------------------------------------------
+LIBDIRS  := $(CTRULIB) $(PORTLIBS)
+
+#---------------------------------------------------------------------------------
 ifneq ($(BUILD),$(notdir $(CURDIR)))
+#---------------------------------------------------------------------------------
 
 export OUTPUT  := $(CURDIR)/$(TARGET)
 export TOPDIR  := $(CURDIR)
+
 export VPATH   := $(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
                   $(foreach dir,$(DATA),$(CURDIR)/$(dir))
+
 export DEPSDIR := $(CURDIR)/$(BUILD)
 
 CFILES   := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
@@ -49,9 +64,12 @@ CPPFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
 SFILES   := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
 BINFILES := $(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
 
-export LD      := $(CC)
-export OFILES  := $(addsuffix .o,$(BINFILES)) \
-                  $(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
+export LD := $(CC)
+
+export OFILES_BIN   := $(addsuffix .o,$(BINFILES))
+export OFILES_SRC   := $(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
+export OFILES       := $(OFILES_BIN) $(OFILES_SRC)
+export HFILES_BIN   := $(patsubst %.bin,%.h,$(filter %.bin,$(BINFILES)))
 
 export INCLUDE := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
                   $(foreach dir,$(LIBDIRS),-I$(dir)/include) \
@@ -59,32 +77,42 @@ export INCLUDE := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
 
 export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 
-export APP_TITLE
-export APP_AUTHOR
-export APP_DESC
-export _3DSXFLAGS += --smdh=$(CURDIR)/$(TARGET).smdh --romfs=$(CURDIR)/$(ROMFS)
+export _3DSXFLAGS += --romfs=$(CURDIR)/$(ROMFS) --smdh=$(CURDIR)/$(TARGET).smdh
 
-.PHONY: all clean
+.PHONY: $(BUILD) clean all
 
-all: $(CURDIR)/$(TARGET).smdh $(BUILD)
-	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
+all: $(TARGET).smdh $(BUILD)
 
-$(CURDIR)/$(TARGET).smdh:
-	@echo "Building SMDH..."
-	@smdhtool --create "$(APP_TITLE)" "$(APP_DESC)" "$(APP_AUTHOR)" \
-	    $(CURDIR)/meta/icon48.png $(CURDIR)/$(TARGET).smdh
+$(TARGET).smdh: $(ICON)
+	@smdhtool --create "$(APP_TITLE)" "$(APP_DESC)" "$(APP_AUTHOR)" $< $@
 
 $(BUILD):
-	@mkdir -p $@
+	@[ -d $@ ] || mkdir -p $@
+	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
 clean:
-	@rm -rf $(BUILD) $(TARGET).3dsx $(TARGET).elf $(TARGET).smdh $(TARGET).cia
+	@echo clean ...
+	@rm -fr $(BUILD) $(TARGET).3dsx $(TARGET).smdh $(TARGET).elf
 
+#---------------------------------------------------------------------------------
 else
-
+#---------------------------------------------------------------------------------
 DEPENDS := $(OFILES:.o=.d)
-$(OUTPUT).3dsx: $(OUTPUT).elf
-$(OUTPUT).elf:  $(OFILES)
--include $(DEPENDS)
 
+# Build 3dsx directly from elf — no smdh dependency
+$(OUTPUT).3dsx: $(OUTPUT).elf
+	@echo built ... $(notdir $@)
+	@3dsxtool $< $@ $(_3DSXFLAGS)
+
+$(OFILES_SRC): $(HFILES_BIN)
+
+$(OUTPUT).elf: $(OFILES)
+
+%.bin.o %_bin.h: %.bin
+	@echo $(notdir $<)
+	@$(bin2o)
+
+-include $(DEPENDS)
+#---------------------------------------------------------------------------------
 endif
+#---------------------------------------------------------------------------------
