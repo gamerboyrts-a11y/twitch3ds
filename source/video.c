@@ -592,13 +592,13 @@ bool video_init(void) {
         MVD_OUTPUT_RGB565, MVD_DEFAULT_WORKBUF_SIZE, NULL);
     if (R_FAILED(r)) { LOG("vid: mvdstdInit FAILED 0x%lx", r); return false; }
     V.mvd_ok = true;
-    V.outbuf = linearAlloc(OUT_W * OUT_H * 2);
+    V.outbuf = linearAlloc(TEX_W * TEX_H * 2);
     V.nalbuf = linearAlloc(NAL_MAX);
     V.stgbuf = linearAlloc(TEX_W * TEX_H * 2);
     if (!V.outbuf || !V.nalbuf || !V.stgbuf) {
         LOG("vid: linearAlloc FAILED"); mvdstdExit(); return false;
     }
-    memset(V.outbuf, 0, OUT_W * OUT_H * 2);
+    memset(V.outbuf, 0, TEX_W * TEX_H * 2);
     memset(V.stgbuf, 0, TEX_W * TEX_H * 2);
     LightLock_Init(&V.lock);
     C3D_TexInit(&V.tex, TEX_W, TEX_H, GPU_RGB565);
@@ -657,15 +657,11 @@ void video_upload_frame(void) {
     if (ready) V.has_frame = false;
     LightLock_Unlock(&V.lock);
 
-    if (!ready || !V.stgbuf) return;
+    if (!ready) return;
 
-    /* MVD writes via DMA — invalidate CPU cache before reading outbuf */
-    GSPGPU_InvalidateDataCache(V.outbuf, OUT_W * OUT_H * 2);
-    for (int row = 0; row < OUT_H; row++)
-        memcpy(V.stgbuf + row*TEX_W*2, V.outbuf + row*OUT_W*2, OUT_W*2);
-    GSPGPU_FlushDataCache(V.stgbuf, TEX_W * TEX_H * 2);
+    /* outbuf is TEX_W*TEX_H with MVD stride — transfer directly, GX DMA bypasses CPU cache */
     C3D_SyncDisplayTransfer(
-        (u32*)V.stgbuf,   GX_BUFFER_DIM(TEX_W, TEX_H),
+        (u32*)V.outbuf,   GX_BUFFER_DIM(TEX_W, TEX_H),
         (u32*)V.tex.data, GX_BUFFER_DIM(TEX_W, TEX_H),
         GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGB565)  |
         GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB565) |
