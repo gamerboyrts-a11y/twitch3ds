@@ -184,12 +184,12 @@ static bool fetch_hls_url(void) {
     curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(c, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
     curl_easy_setopt(c, CURLOPT_TIMEOUT, 15L);
-    curl_easy_perform(c);
+    CURLcode gql_res = curl_easy_perform(c);
+    long gql_code = 0;
+    curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &gql_code);
     curl_slist_free_all(h);
     curl_easy_cleanup(c);
-
-
-    LOG("vid: GQL resp(%.200s)", buf.d ? buf.d : "(null)");
+    LOG("vid: GQL curl=%d http=%ld resp(%.200s)", (int)gql_res, gql_code, buf.d ? buf.d : "(null)");
 
 
     if (!buf.d || !buf.d[0]) {
@@ -669,7 +669,7 @@ void video_draw_top(float x, float y) {
             GX_TRANSFER_FLIP_VERT(1)                       |
             GX_TRANSFER_OUT_TILED(1)                       |
             GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
-        /* Mark texture as containing real pixel data */
+        C3D_TexFlush(&V.tex);
         V.tex_valid = true;
     }
 
