@@ -659,7 +659,11 @@ void video_upload_frame(void) {
 
     if (!ready) return;
 
-    /* outbuf is TEX_W*TEX_H with MVD stride — transfer directly, GX DMA bypasses CPU cache */
+    /* TEST: fill with solid red to confirm display pipeline works */
+    { u16 *p = (u16*)V.outbuf; for (int i = 0; i < TEX_W*TEX_H; i++) p[i] = 0xF800; }
+    LOG("vid: upload test frame (red fill)");
+
+    /* outbuf is TEX_W*TEX_H — transfer directly, GX DMA bypasses CPU cache */
     C3D_SyncDisplayTransfer(
         (u32*)V.outbuf,   GX_BUFFER_DIM(TEX_W, TEX_H),
         (u32*)V.tex.data, GX_BUFFER_DIM(TEX_W, TEX_H),
