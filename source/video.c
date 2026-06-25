@@ -669,23 +669,9 @@ void video_upload_frame(void) {
 
     if (!ready) return;
 
-    /* Invalidate CPU cache — MVD writes via DMA to physical memory */
-    GSPGPU_InvalidateDataCache(V.outbuf, TEX_W * TEX_H * 2);
-
-    /* Log first pixel once to confirm MVD is writing (non-zero = MVD output present) */
-    static bool logged = false;
-    if (!logged) {
-        u16 p = ((u16*)V.outbuf)[0];
-        LOG("vid: outbuf[0]=0x%04x (0=MVD not writing, non-zero=ok)", p);
-        logged = true;
-    }
-
-    /* Copy row-by-row: MVD stride=OUT_W, stgbuf stride=TEX_W */
-    for (int row = 0; row < OUT_H; row++)
-        memcpy(V.stgbuf + row*TEX_W*2, V.outbuf + row*OUT_W*2, OUT_W*2);
-    GSPGPU_FlushDataCache(V.stgbuf, TEX_W * TEX_H * 2);
+    /* Direct GX transfer from MVD outbuf — GX reads physical DRAM, bypasses CPU cache */
     C3D_SyncDisplayTransfer(
-        (u32*)V.outbuf,   GX_BUFFER_DIM(TEX_W, TEX_H),
+        (u32*)V.outbuf,   GX_BUFFER_DIM(OUT_W, OUT_H),
         (u32*)V.tex.data, GX_BUFFER_DIM(TEX_W, TEX_H),
         GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGB565)  |
         GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB565) |
